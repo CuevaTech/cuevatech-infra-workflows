@@ -1,0 +1,151 @@
+name: Reusable — Build, Push ECR & Deploy to EKS
+
+on:
+  workflow_call:
+    inputs:
+      ecr-repository:
+        description: "ECR repository name (e.g. worldbinary-ms-chat-devops)"
+        required: true
+        type: string
+      aws-region:
+        description: "AWS region"
+        required: false
+        type: string
+        default: "us-west-1"
+      eks-cluster-name:
+        description: "EKS cluster name"
+        required: false
+        type: string
+        default: "eks-worldbinary-app-v1"
+      k8s-namespace:
+        description: "Kubernetes namespace to deploy to"
+        required: true
+        type: string
+      k8s-deployment-name:
+        description: "Kubernetes deployment name"
+        required: true
+        type: string
+      manifests-repo:
+        description: "GitHub repo with K8s manifests (org/repo)"
+        required: false
+        type: string
+        default: "WorldBinary/kubernetes-manifest"
+      manifests-path:
+        description: "Path inside manifests repo (e.g. worldbinary-tv/ms-chat/devops)"
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      GH_MANIFEST_TOKEN:
+        required: true
+    outputs:
+      image-uri:
+        description: "Full ECR image URI with tag"
+        value: ${{ jobs.build-push.outputs.image-uri }}
+
+jobs:
+  build-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image-uri: ${{ steps.build.outputs.image-uri }}
+      image-tag: ${{ steps.build.outputs.image-tag }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR repo if not exists
+        run: |
+          aws ecr describe-repositories --repository-names ${{ inputs.ecr-repository }} \
+            --region ${{ inputs.aws-region }} 2>/dev/null || \
+          aws ecr create-repository --repository-name ${{ inputs.ecr-repository }} \
+            --region ${{ inputs.aws-region }} \
+            --image-scanning-configuration scanOnPush=true
+
+      - name: Build & Push Docker image
+        id: build
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ inputs.ecr-repository }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "Built and pushed: $IMAGE_URI"
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build-push
+
+    steps:
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.manifests-repo }}
+          token: ${{ secrets.GH_MANIFEST_TOKEN }}
+          path: k8s-manifests
+
+      - name: Update image tag in deployment.yaml
+        run: |
+          IMAGE_URI="${{ needs.build-push.outputs.image-uri }}"
+          DEPLOY_FILE="k8s-manifests/${{ inputs.manifests-path }}/deployment.yaml"
+          sed -i "s|image:.*${{ inputs.ecr-repository }}.*|image: $IMAGE_URI|g" "$DEPLOY_FILE"
+          echo "Updated image to: $IMAGE_URI"
+          cat "$DEPLOY_FILE" | grep "image:"
+
+      - name: Commit updated manifest
+        run: |
+          cd k8s-manifests
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${{ inputs.manifests-path }}/deployment.yaml
+          git commit -m "ci: update ${{ inputs.k8s-deployment-name }} image to ${{ github.sha }}" || echo "No changes to commit"
+          git push
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ inputs.eks-cluster-name }} \
+            --region ${{ inputs.aws-region }}
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f k8s-manifests/${{ inputs.manifests-path }}/
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/${{ inputs.k8s-deployment-name }} \
+            -n ${{ inputs.k8s-namespace }} \
+            --timeout=120s
+
+      - name: Verify pods
+        run: |
+          kubectl get pods -n ${{ inputs.k8s-namespace }} \
+            -l app=${{ inputs.k8s-deployment-name }} \
+            --show-labels
