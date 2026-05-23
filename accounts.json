@@ -1,17 +1,17 @@
 {
   "worldbinary": {
-    "dev":    { "account": "294337989757", "region": "us-west-2" },
-    "qa":     { "account": "294337989757", "region": "us-west-2" },
-    "stress": { "account": "683707058612", "region": "us-west-2" },
-    "prod":   { "account": "788655294923", "region": "us-west-2" }
+    "dev":     { "account": "294337989757", "region": "us-west-2" },
+    "qa":      { "account": "294337989757", "region": "us-west-2" },
+    "staging": { "account": "683707058612", "region": "us-west-2" },
+    "prod":    { "account": "788655294923", "region": "us-west-2" }
   },
   "impulse": {
-    "dev":    { "account": "272751719858", "region": "us-east-2" },
-    "qa":     { "account": "272751719858", "region": "us-east-2" },
-    "stress": { "account": "478067374942", "region": "us-east-2" },
-    "prod":   { "account": "539749168220", "region": "us-east-2" }
+    "dev":     { "account": "272751719858", "region": "us-east-2" },
+    "qa":      { "account": "272751719858", "region": "us-east-2" },
+    "staging": { "account": "478067374942", "region": "us-east-2" },
+    "prod":    { "account": "539749168220", "region": "us-east-2" }
   },
   "cuevatech": {
-    "dev":    { "account": "852009799966", "region": "us-east-1" }
+    "dev":     { "account": "852009799966", "region": "us-east-1" }
   }
 }
