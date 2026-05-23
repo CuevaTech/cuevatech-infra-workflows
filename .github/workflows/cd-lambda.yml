@@ -1,0 +1,74 @@
+name: CD Lambda
+
+# Deploy a Lambda image-based: actualiza el codigo de la funcion apuntando a la
+# imagen ya construida y publicada en ECR. Push directo a AWS (no GitOps), auth
+# via OIDC. NO toca la configuracion (env vars) — update-function-configuration
+# reemplaza el set completo y borraria SECRET_NAME u otras vars del runtime.
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      env:
+        description: Entorno del pipeline (dev, qa, staging, prod).
+        required: true
+        type: string
+      lambda_name:
+        description: Nombre base de la funcion SIN sufijo de entorno (ej. worldbinary-binaries-ms-alerts).
+        required: true
+        type: string
+      image_uri:
+        description: URI de la imagen a desplegar (de build-image).
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - id: resolve
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        with:
+          product: ${{ inputs.product }}
+          env: ${{ inputs.env }}
+
+      - name: AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.resolve.outputs.role_arn }}
+          aws-region: ${{ steps.resolve.outputs.region }}
+
+      - name: Update function code
+        env:
+          BASE: ${{ inputs.lambda_name }}
+          ENVIRON: ${{ inputs.env }}
+          IMAGE_URI: ${{ inputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$BASE" ]; then
+            echo "::error::lambda_name vacio"
+            exit 1
+          fi
+
+          # Sufijo de entorno de la funcion: dev del pipeline = 'develop' en Lambda;
+          # qa/staging/prod quedan igual.
+          case "$ENVIRON" in
+            dev) seg=develop ;;
+            *)   seg="$ENVIRON" ;;
+          esac
+          fn="${BASE}-${seg}"
+          echo "Funcion destino: $fn"
+
+          aws lambda update-function-code \
+            --function-name "$fn" \
+            --image-uri "$IMAGE_URI" \
+            --publish >/dev/null
+
+          aws lambda wait function-updated --function-name "$fn"
+          echo "Lambda $fn actualizada a $IMAGE_URI"

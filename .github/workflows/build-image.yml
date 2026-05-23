@@ -10,13 +10,18 @@ on:
         required: true
         type: string
       env:
-        description: Entorno (dev, qa, stress, prod).
+        description: Entorno (dev, qa, staging, prod).
+        required: true
+        type: string
+      microservice:
+        description: Nombre del microservicio. El repo ECR se deriva como <product>-<microservice>.
         required: true
         type: string
       image_name:
-        description: Nombre del repositorio/imagen en ECR.
-        required: true
+        description: Override opcional del nombre del repo/imagen ECR. Si se omite, usa <product>-<microservice>.
+        required: false
         type: string
+        default: ""
       context:
         description: Contexto de build de Docker.
         required: false
@@ -58,9 +63,17 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      - id: repo
+        name: Resolve ECR repo name
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          PRODUCT: ${{ inputs.product }}
+          MS: ${{ inputs.microservice }}
+        run: echo "name=${IMAGE_NAME:-${PRODUCT}-${MS}}" >> "$GITHUB_OUTPUT"
+
       - name: Ensure ECR repo
         env:
-          REPO: ${{ inputs.image_name }}
+          REPO: ${{ steps.repo.outputs.name }}
           REGION: ${{ steps.resolve.outputs.region }}
         run: |
           aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" >/dev/null 2>&1 \
@@ -72,7 +85,7 @@ jobs:
         name: Compute tag and URI
         env:
           REGISTRY: ${{ steps.resolve.outputs.registry }}
-          REPO: ${{ inputs.image_name }}
+          REPO: ${{ steps.repo.outputs.name }}
         run: |
           tag="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)"
           {

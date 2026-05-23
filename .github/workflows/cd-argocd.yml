@@ -1,0 +1,97 @@
+name: CD ArgoCD
+
+# Deploy GitOps a Kubernetes: parcha el tag de la imagen en el repo de manifests
+# y pushea. ArgoCD reconcilia (pull). No usa credenciales AWS — solo necesita
+# escribir en el repo de manifests (secret MANIFESTS_GH_TOKEN).
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      env:
+        description: Entorno (dev, qa, staging, prod).
+        required: true
+        type: string
+      microservice:
+        description: Nombre del microservicio (carpeta en el repo de manifests + repo ECR).
+        required: true
+        type: string
+      image_uri:
+        description: URI completa de la imagen a desplegar (de build-image).
+        required: true
+        type: string
+      manifest_file:
+        description: Archivo del manifest a parchar (deployment.yaml; statefulset.yaml para DBs).
+        required: false
+        type: string
+        default: deployment.yaml
+      manifests_repo:
+        description: Repo de manifests que ArgoCD reconcilia.
+        required: false
+        type: string
+        default: WorldBinary/worldbinary-infra-kubernetes-manifests
+    secrets:
+      MANIFESTS_GH_TOKEN:
+        description: PAT con contents:write sobre el repo de manifests.
+        required: true
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.manifests_repo }}
+          token: ${{ secrets.MANIFESTS_GH_TOKEN }}
+          path: manifests
+
+      - name: Patch image + push
+        working-directory: manifests
+        env:
+          PRODUCT: ${{ inputs.product }}
+          ENVIRON: ${{ inputs.env }}
+          MS: ${{ inputs.microservice }}
+          IMAGE_URI: ${{ inputs.image_uri }}
+          MANIFEST_FILE: ${{ inputs.manifest_file }}
+        run: |
+          set -euo pipefail
+
+          # Server (carpeta de cluster): dev y qa comparten el cluster dev/qa.
+          case "$ENVIRON" in
+            dev|qa) server="${PRODUCT}-dev" ;;
+            *)      server="${PRODUCT}-${ENVIRON}" ;;
+          esac
+          ns="wb-${ENVIRON}"
+          file="${server}/${ns}/${MS}/${MANIFEST_FILE}"
+
+          if [ ! -f "$file" ]; then
+            echo "::error::manifest no encontrado: $file"
+            exit 1
+          fi
+
+          # Repo ECR esperado en la linea de imagen, para parchar el contenedor correcto.
+          export REPO="${PRODUCT}-${MS}"
+          export IMAGE_URI
+
+          before=$(grep -c "image:" "$file" || true)
+          yq -i '(.spec.template.spec.containers[] | select(.image | test("/" + strenv(REPO) + ":")) | .image) = strenv(IMAGE_URI)' "$file"
+
+          # Confirma que la imagen objetivo quedo escrita; si no, el repo no matcheo.
+          if ! grep -q "$IMAGE_URI" "$file"; then
+            echo "::error::no se encontro un contenedor con imagen .../$REPO: en $file"
+            exit 1
+          fi
+
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@worldbinary.io"
+          git add "$file"
+          if git diff --cached --quiet; then
+            echo "Sin cambios: la imagen ya estaba en $IMAGE_URI"
+            exit 0
+          fi
+          git commit -m "deploy(${PRODUCT}/${ENVIRON}/${MS}): ${IMAGE_URI}"
+          git push
+          echo "Manifest $file apuntado a $IMAGE_URI (ArgoCD reconcilia)"

@@ -1,0 +1,67 @@
+name: CD
+
+# Dispatcher de deploy. El caller declara product/env/microservice + type y la
+# imagen ya construida (image_uri de build-image). Segun type rutea al reusable
+# correspondiente. GitHub no permite `uses:` dinamico, por eso bloques if.
+#   - kubernetes -> cd-argocd (GitOps: patch manifest + push, ArgoCD reconcilia)
+#   - lambda     -> cd-lambda (push directo: update-function-code)
+# Agregar un target nuevo = additivo (otro cd-*.yml + otro job con su if).
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      env:
+        description: Entorno (dev, qa, staging, prod).
+        required: true
+        type: string
+      microservice:
+        description: Nombre del microservicio.
+        required: true
+        type: string
+      type:
+        description: Tipo de servicio (kubernetes, lambda).
+        required: true
+        type: string
+      image_uri:
+        description: URI de la imagen a desplegar (de build-image).
+        required: true
+        type: string
+      lambda_name:
+        description: Nombre base de la Lambda SIN sufijo de entorno. Requerido si type=lambda.
+        required: false
+        type: string
+        default: ""
+      manifest_file:
+        description: Archivo del manifest a parchar (solo type=kubernetes).
+        required: false
+        type: string
+        default: deployment.yaml
+    secrets:
+      MANIFESTS_GH_TOKEN:
+        description: PAT con contents:write sobre el repo de manifests (solo type=kubernetes).
+        required: false
+
+jobs:
+  kubernetes:
+    if: ${{ inputs.type == 'kubernetes' }}
+    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/cd-argocd.yml@main
+    with:
+      product: ${{ inputs.product }}
+      env: ${{ inputs.env }}
+      microservice: ${{ inputs.microservice }}
+      image_uri: ${{ inputs.image_uri }}
+      manifest_file: ${{ inputs.manifest_file }}
+    secrets:
+      MANIFESTS_GH_TOKEN: ${{ secrets.MANIFESTS_GH_TOKEN }}
+
+  lambda:
+    if: ${{ inputs.type == 'lambda' }}
+    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/cd-lambda.yml@main
+    with:
+      product: ${{ inputs.product }}
+      env: ${{ inputs.env }}
+      lambda_name: ${{ inputs.lambda_name }}
+      image_uri: ${{ inputs.image_uri }}
