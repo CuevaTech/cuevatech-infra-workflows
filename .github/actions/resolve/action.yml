@@ -1,0 +1,60 @@
+name: Resolve account
+description: Resuelve account/region/role_arn/registry para un product+env leyendo accounts.json.
+
+inputs:
+  product:
+    description: Producto (worldbinary, impulse, cuevatech).
+    required: true
+  env:
+    description: Entorno (dev, qa, stress, prod).
+    required: true
+
+outputs:
+  account:
+    description: AWS account ID.
+    value: ${{ steps.r.outputs.account }}
+  region:
+    description: AWS region del target.
+    value: ${{ steps.r.outputs.region }}
+  role_arn:
+    description: ARN del role deployer que se asume via OIDC.
+    value: ${{ steps.r.outputs.role_arn }}
+  registry:
+    description: Host del registry ECR de la cuenta.
+    value: ${{ steps.r.outputs.registry }}
+
+runs:
+  using: composite
+  steps:
+    # Un composite action clona su repo al runner, asi que accounts.json (en la
+    # raiz de infra-workflows) es legible sin token ni checkout extra del caller.
+    - id: r
+      shell: bash
+      env:
+        PRODUCT: ${{ inputs.product }}
+        ENVIRON: ${{ inputs.env }}
+      run: |
+        set -euo pipefail
+        accounts="$GITHUB_ACTION_PATH/../../../accounts.json"
+        if [ ! -f "$accounts" ]; then
+          echo "::error::accounts.json no encontrado en $accounts"
+          exit 1
+        fi
+
+        entry=$(jq -c --arg p "$PRODUCT" --arg e "$ENVIRON" '.[$p][$e] // empty' "$accounts")
+        if [ -z "$entry" ]; then
+          echo "::error::product/env no mapeado en accounts.json: $PRODUCT/$ENVIRON"
+          exit 1
+        fi
+
+        account=$(echo "$entry" | jq -r '.account')
+        region=$(echo "$entry" | jq -r '.region')
+
+        {
+          echo "account=$account"
+          echo "region=$region"
+          echo "role_arn=arn:aws:iam::${account}:role/github-actions-deployer"
+          echo "registry=${account}.dkr.ecr.${region}.amazonaws.com"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Resuelto $PRODUCT/$ENVIRON -> account=$account region=$region"

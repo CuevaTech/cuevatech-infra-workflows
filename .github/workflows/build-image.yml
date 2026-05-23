@@ -1,0 +1,91 @@
+name: Build Image
+
+# Construye y publica una imagen Docker a ECR de la cuenta resuelta por product+env.
+# Auth via OIDC (sin access keys). Tag inmutable SHORT_SHA-TIMESTAMP, nunca :latest.
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      env:
+        description: Entorno (dev, qa, stress, prod).
+        required: true
+        type: string
+      image_name:
+        description: Nombre del repositorio/imagen en ECR.
+        required: true
+        type: string
+      context:
+        description: Contexto de build de Docker.
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: Ruta del Dockerfile relativa al contexto.
+        required: false
+        type: string
+        default: Dockerfile
+    outputs:
+      image_uri:
+        description: URI completa de la imagen pusheada (con tag).
+        value: ${{ jobs.build.outputs.image_uri }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        with:
+          product: ${{ inputs.product }}
+          env: ${{ inputs.env }}
+
+      - name: AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.resolve.outputs.role_arn }}
+          aws-region: ${{ steps.resolve.outputs.region }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repo
+        env:
+          REPO: ${{ inputs.image_name }}
+          REGION: ${{ steps.resolve.outputs.region }}
+        run: |
+          aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "$REPO" --region "$REGION" \
+                 --image-scanning-configuration scanOnPush=true \
+                 --image-tag-mutability IMMUTABLE
+
+      - id: meta
+        name: Compute tag and URI
+        env:
+          REGISTRY: ${{ steps.resolve.outputs.registry }}
+          REPO: ${{ inputs.image_name }}
+        run: |
+          tag="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)"
+          {
+            echo "tag=$tag"
+            echo "image_uri=${REGISTRY}/${REPO}:${tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.image_uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

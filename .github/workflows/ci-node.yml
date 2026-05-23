@@ -1,0 +1,47 @@
+name: CI Node
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: Versión de Node.
+        required: false
+        type: string
+        default: "24"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      # Scan de dependencias/código en el filesystem. Gratis, sin token. No bloquea
+      # aún (exit-code 0); endurecer a 1 cuando el equipo limpie hallazgos.
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+
+      # TODO (decisión jefe pendiente): snyk OSS + snyk Code (requiere SNYK_TOKEN),
+      # codeql y sonar. Se agregan como jobs paralelos cuando se aprueben.

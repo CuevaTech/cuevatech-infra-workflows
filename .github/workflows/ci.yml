@@ -1,0 +1,17 @@
+name: CI
+
+# Reusable padre. Hoy solo node; multi-lenguaje a futuro se agrega como jobs
+# adicionales con su propio if (sin tocar a los callers).
+on:
+  workflow_call:
+    inputs:
+      lang:
+        description: Lenguaje del proyecto (node).
+        required: false
+        type: string
+        default: node
+
+jobs:
+  node:
+    if: ${{ inputs.lang == 'node' }}
+    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci-node.yml@main
