@@ -93,6 +93,11 @@ jobs:
             echo "image_uri=${REGISTRY}/${REPO}:${tag}"
           } >> "$GITHUB_OUTPUT"
 
+      # El cache gha requiere el driver docker-container (el driver docker
+      # default no soporta cache export). setup-buildx lo provee.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build image (local)
         uses: docker/build-push-action@v6
         with:
