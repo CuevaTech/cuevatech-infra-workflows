@@ -36,6 +36,10 @@ on:
       image_uri:
         description: URI completa de la imagen pusheada (con tag).
         value: ${{ jobs.build.outputs.image_uri }}
+    secrets:
+      DEFECTDOJO_TOKEN:
+        description: Token API DefectDojo para subir el reporte de scan (opcional).
+        required: false
 
 jobs:
   build:
@@ -109,9 +113,48 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Escanea la imagen ya construida. Bloquea (exit 1) solo ante CRITICAL;
-      # asi no se publica una imagen con vulnerabilidades criticas.
-      - name: Trivy image scan
+      # Reporte completo (todas las severidades) para el panel DefectDojo.
+      # No bloquea (exit 0); el gate de mas abajo es el que corta.
+      - name: Trivy report (JSON)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image_uri }}
+          format: json
+          output: trivy-report.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+
+      # Sube el reporte a DefectDojo (panel unificado de hallazgos). No bloquea:
+      # si falta URL/token o DefectDojo no responde, el build continua.
+      - name: Upload report to DefectDojo
+        if: ${{ always() && vars.DEFECTDOJO_URL != '' && hashFiles('trivy-report.json') != '' }}
+        continue-on-error: true
+        env:
+          DD_URL: ${{ vars.DEFECTDOJO_URL }}
+          DD_TOKEN: ${{ secrets.DEFECTDOJO_TOKEN }}
+          PRODUCT: ${{ inputs.product }}
+          MS: ${{ inputs.microservice }}
+          ENVIRON: ${{ inputs.env }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if [ -z "$DD_TOKEN" ]; then
+            echo "DEFECTDOJO_TOKEN vacio, salto upload"; exit 0
+          fi
+          curl -sS -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
+            -H "Authorization: Token $DD_TOKEN" \
+            -F "scan_type=Trivy Scan" \
+            -F "file=@trivy-report.json" \
+            -F "auto_create_context=true" \
+            -F "product_name=${PRODUCT}-${MS}" \
+            -F "engagement_name=${ENVIRON}" \
+            -F "version=${TAG}" \
+            -F "active=true" -F "verified=false" \
+            -F "minimum_severity=Info" \
+            -o /dev/null -w "DefectDojo upload HTTP %{http_code}\n"
+
+      # Gate: bloquea (exit 1) solo ante CRITICAL con fix disponible, asi no se
+      # publica una imagen con vulnerabilidades criticas.
+      - name: Trivy gate (CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.image_uri }}
