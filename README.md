@@ -217,6 +217,8 @@ Estado actual del pipeline y hacia dónde debe evolucionar.
 | Registro de hallazgos | DefectDojo (Trivy) | DefectDojo con todos los scanners + SLAs/triage |
 | ECR | tag inmutable SHA-TS | + lifecycle (prod keep 5, dev/qa 30d, untagged 7d) |
 | OIDC | role deployer con AdministratorAccess | least-privilege por servicio/cuenta |
+| Runners | GitHub-hosted | self-hosted K8s (ARC) en EKS: BuildKit remoto + cache compartido + IRSA + Karpenter spot |
+| Granularidad jobs | CI: checks + test (jobs); build: 1 job con steps | build/scan/push como jobs separados (requiere ARC o registro intermedio) |
 
 ### Roadmap (orden sugerido)
 1. Gobernanza (branch protection + required checks) — barato, alto impacto.
@@ -224,6 +226,7 @@ Estado actual del pipeline y hacia dónde debe evolucionar.
 3. Promoción por digest (qa→prod) + cosign.
 4. Rollback por target + notifs Slack.
 5. ECR lifecycle + OIDC least-privilege.
+6. **Runners K8s (ARC)** en EKS: BuildKit remoto (cache compartido) + IRSA + Karpenter spot. Habilita separación total build/scan/push y saca el build de runners GitHub-hosted. Proyecto de infra aparte.
 
 ---
 

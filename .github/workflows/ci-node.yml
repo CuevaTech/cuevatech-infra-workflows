@@ -1,5 +1,9 @@
 name: CI Node
 
+# CI para proyectos Node. Separado en dos jobs paralelos:
+#   - checks: typecheck + lint (analisis estatico)
+#   - test:   pruebas
+# El scan de la imagen NO va aqui (necesita la imagen); lo hace build-image.
 on:
   workflow_call:
     inputs:
@@ -14,24 +18,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: npm
-
       - name: Install
         run: npm ci
-
       - name: Typecheck
         run: npx tsc --noEmit
-
       - name: Lint
         run: npm run lint --if-present
+      # Scans de dependencias/codigo (Snyk OSS + Snyk Code, CodeQL, Trivy fs)
+      # van aqui a futuro (analisis a nivel de fuente, sin imagen).
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+      - name: Install
+        run: npm ci
       - name: Test
         run: npm test --if-present
-
-      # Scans de dependencias/código (snyk OSS + snyk Code) van aquí — pendiente
-      # SNYK_TOKEN (decisión jefe), más codeql/sonar. El scan de la imagen lo hace
-      # build-image con Trivy.
