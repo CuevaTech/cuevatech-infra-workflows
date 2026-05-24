@@ -136,6 +136,10 @@ jobs:
           MS: ${{ inputs.microservice }}
           ENVIRON: ${{ inputs.env }}
           TAG: ${{ steps.meta.outputs.tag }}
+          COMMIT: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           if [ -z "$DD_TOKEN" ]; then
             echo "DEFECTDOJO_TOKEN vacio, salto upload"; exit 0
@@ -149,6 +153,10 @@ jobs:
             -F "product_name=${PRODUCT}-${MS}" \
             -F "engagement_name=${ENVIRON}" \
             -F "version=${TAG}" \
+            -F "commit_hash=${COMMIT}" \
+            -F "branch_tag=${BRANCH}" \
+            -F "build_id=${RUN_ID}" \
+            -F "source_code_management_uri=${REPO_URL}" \
             -F "active=true" -F "verified=false" \
             -F "minimum_severity=Info" \
             -o /tmp/dd-resp.json -w "%{http_code}")
