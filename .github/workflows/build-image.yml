@@ -140,17 +140,24 @@ jobs:
           if [ -z "$DD_TOKEN" ]; then
             echo "DEFECTDOJO_TOKEN vacio, salto upload"; exit 0
           fi
-          curl -sS -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
+          http=$(curl -sS -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
             -H "Authorization: Token $DD_TOKEN" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-report.json" \
             -F "auto_create_context=true" \
+            -F "product_type_name=${PRODUCT}" \
             -F "product_name=${PRODUCT}-${MS}" \
             -F "engagement_name=${ENVIRON}" \
             -F "version=${TAG}" \
             -F "active=true" -F "verified=false" \
             -F "minimum_severity=Info" \
-            -o /dev/null -w "DefectDojo upload HTTP %{http_code}\n"
+            -o /tmp/dd-resp.json -w "%{http_code}")
+          echo "DefectDojo upload HTTP $http"
+          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
+            echo "::error::DefectDojo upload fallo (HTTP $http)"
+            cat /tmp/dd-resp.json || true
+            exit 1
+          fi
 
       # Gate: bloquea (exit 1) solo ante CRITICAL con fix disponible, asi no se
       # publica una imagen con vulnerabilidades criticas.
