@@ -90,8 +90,20 @@ jobs:
         env:
           REGISTRY: ${{ steps.resolve.outputs.registry }}
           REPO: ${{ steps.repo.outputs.name }}
+          ENVIRON: ${{ inputs.env }}
         run: |
-          tag="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)"
+          # Prefijo de tag por entorno. prod queda sin prefijo porque su repo
+          # vive en cuenta hermetica separada (788), el nombre del repo no
+          # mezcla envs y el prefijo seria redundante. Cuenta dev/qa (294)
+          # comparte repo, asi que el prefijo distingue grupos para lifecycle.
+          case "$ENVIRON" in
+            dev)     prefix="develop-" ;;
+            qa)      prefix="qa-" ;;
+            staging) prefix="staging-" ;;
+            prod)    prefix="" ;;
+            *)       prefix="${ENVIRON}-" ;;
+          esac
+          tag="${prefix}$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)"
           {
             echo "tag=$tag"
             echo "image_uri=${REGISTRY}/${REPO}:${tag}"

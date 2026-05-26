@@ -106,27 +106,44 @@ jobs:
           REPO: ${{ steps.repo.outputs.name }}
           REGION: ${{ steps.dst.outputs.region }}
           REGISTRY: ${{ steps.dst.outputs.registry }}
+          SRC_ENV: ${{ inputs.src_env }}
           DST_ENV: ${{ inputs.dst_env }}
         run: |
           set -euo pipefail
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "SHORT_SHA=$SHORT_SHA REPO=$REPO REGION=$REGION"
 
-          # Busca la imagen mas reciente cuyo tag empiece con <short_sha>-<ts>.
-          # build-image.yml usa exactamente ese formato. Si no aparece, el build
-          # de src_env nunca corrio para este SHA (o el ECR esta vacio).
+          # Mapeo env -> prefijo de tag. Debe coincidir con build-image.yml:
+          # dev=develop-, qa=qa-, staging=staging-, prod="" (sin prefijo).
+          prefix_for() {
+            case "$1" in
+              dev)     echo "develop-" ;;
+              qa)      echo "qa-" ;;
+              staging) echo "staging-" ;;
+              prod)    echo "" ;;
+              *)       echo "${1}-" ;;
+            esac
+          }
+          src_prefix=$(prefix_for "$SRC_ENV")
+          dst_prefix=$(prefix_for "$DST_ENV")
+
+          # Busca la imagen mas reciente cuyo tag matchee ${src_prefix}${SHORT_SHA}-<ts>.
+          # Si no aparece, el build de src_env nunca corrio para este SHA o el repo esta vacio.
+          pattern="^${src_prefix}${SHORT_SHA}-[0-9]+$"
           src_tag=$(aws ecr describe-images \
             --repository-name "$REPO" \
             --region "$REGION" \
             --query "reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]" \
-            --output text | tr '\t' '\n' | grep -E "^${SHORT_SHA}-[0-9]+$" | head -1 || true)
+            --output text | tr '\t' '\n' | grep -E "$pattern" | head -1 || true)
 
           if [ -z "$src_tag" ]; then
-            echo "::error::No se encontro imagen con prefijo ${SHORT_SHA} en repo ${REPO} (region ${REGION}). El build del entorno origen debe correr antes para este SHA."
+            echo "::error::No se encontro imagen con patron '${pattern}' en repo ${REPO} (region ${REGION}). El build de '${SRC_ENV}' debe correr antes para este SHA."
             exit 1
           fi
 
-          dst_tag="${DST_ENV}-${src_tag}"
+          # Strip src prefix para obtener el core <sha>-<ts>, luego aplica dst prefix.
+          core="${src_tag#${src_prefix}}"
+          dst_tag="${dst_prefix}${core}"
           src_uri="${REGISTRY}/${REPO}:${src_tag}"
           dst_uri="${REGISTRY}/${REPO}:${dst_tag}"
 
