@@ -1,0 +1,143 @@
+name: Promote Image
+
+# Promueve una imagen ECR ya construida de un entorno a otro re-tageando
+# (docker pull + tag + push) sin rebuild. Patron pensado para qa: la imagen
+# de dev se promueve a qa con prefijo de tag dst (ej. qa-<sha>-<ts>). Los
+# secrets son runtime (inyectados por ESO en K8s / task-def en Fargate / env
+# en Lambda), asi que la misma imagen sirve para todos los entornos.
+#
+# Soporta intra-account (mismo registry, ej. worldbinary dev->qa en 294). El
+# caso cross-account (ej. qa->prod en 788) requiere crane copy + cosign para
+# preservar digest y firma; queda como TODO (sale por error si src.account
+# difiere de dst.account).
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      src_env:
+        description: Entorno origen (ej. dev).
+        required: true
+        type: string
+      dst_env:
+        description: Entorno destino (ej. qa).
+        required: true
+        type: string
+      microservice:
+        description: Nombre del microservicio. El repo ECR se deriva como <product>-<microservice>.
+        required: true
+        type: string
+      image_name:
+        description: Override opcional del nombre del repo/imagen ECR. Si se omite, usa <product>-<microservice>.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      image_uri:
+        description: URI completa de la imagen promovida (con tag dst).
+        value: ${{ jobs.promote.outputs.image_uri }}
+      src_tag:
+        description: Tag de origen detectado en ECR (formato <short_sha>-<ts>).
+        value: ${{ jobs.promote.outputs.src_tag }}
+      dst_tag:
+        description: Tag de destino aplicado (formato <dst_env>-<short_sha>-<ts>).
+        value: ${{ jobs.promote.outputs.dst_tag }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_uri: ${{ steps.tag.outputs.image_uri }}
+      src_tag: ${{ steps.tag.outputs.src_tag }}
+      dst_tag: ${{ steps.tag.outputs.dst_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: src
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        with:
+          product: ${{ inputs.product }}
+          env: ${{ inputs.src_env }}
+
+      - id: dst
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        with:
+          product: ${{ inputs.product }}
+          env: ${{ inputs.dst_env }}
+
+      - name: Validate intra-account
+        env:
+          SRC_ACC: ${{ steps.src.outputs.account }}
+          DST_ACC: ${{ steps.dst.outputs.account }}
+          SRC_REG: ${{ steps.src.outputs.region }}
+          DST_REG: ${{ steps.dst.outputs.region }}
+        run: |
+          set -eu
+          if [ "$SRC_ACC" != "$DST_ACC" ] || [ "$SRC_REG" != "$DST_REG" ]; then
+            echo "::error::Promote cross-account/region (${SRC_ACC}/${SRC_REG} -> ${DST_ACC}/${DST_REG}) requiere crane copy + cosign (TODO). Solo intra-account/region soportado."
+            exit 1
+          fi
+
+      - name: AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.dst.outputs.role_arn }}
+          aws-region: ${{ steps.dst.outputs.region }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - id: repo
+        name: Resolve ECR repo name
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          PRODUCT: ${{ inputs.product }}
+          MS: ${{ inputs.microservice }}
+        run: echo "name=${IMAGE_NAME:-${PRODUCT}-${MS}}" >> "$GITHUB_OUTPUT"
+
+      - id: tag
+        name: Find src tag, retag and push
+        env:
+          REPO: ${{ steps.repo.outputs.name }}
+          REGION: ${{ steps.dst.outputs.region }}
+          REGISTRY: ${{ steps.dst.outputs.registry }}
+          DST_ENV: ${{ inputs.dst_env }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "SHORT_SHA=$SHORT_SHA REPO=$REPO REGION=$REGION"
+
+          # Busca la imagen mas reciente cuyo tag empiece con <short_sha>-<ts>.
+          # build-image.yml usa exactamente ese formato. Si no aparece, el build
+          # de src_env nunca corrio para este SHA (o el ECR esta vacio).
+          src_tag=$(aws ecr describe-images \
+            --repository-name "$REPO" \
+            --region "$REGION" \
+            --query "reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]" \
+            --output text | tr '\t' '\n' | grep -E "^${SHORT_SHA}-[0-9]+$" | head -1 || true)
+
+          if [ -z "$src_tag" ]; then
+            echo "::error::No se encontro imagen con prefijo ${SHORT_SHA} en repo ${REPO} (region ${REGION}). El build del entorno origen debe correr antes para este SHA."
+            exit 1
+          fi
+
+          dst_tag="${DST_ENV}-${src_tag}"
+          src_uri="${REGISTRY}/${REPO}:${src_tag}"
+          dst_uri="${REGISTRY}/${REPO}:${dst_tag}"
+
+          echo "Pulling  $src_uri"
+          docker pull "$src_uri"
+          docker tag "$src_uri" "$dst_uri"
+          echo "Pushing  $dst_uri"
+          docker push "$dst_uri"
+
+          {
+            echo "src_tag=$src_tag"
+            echo "dst_tag=$dst_tag"
+            echo "image_uri=$dst_uri"
+          } >> "$GITHUB_OUTPUT"
