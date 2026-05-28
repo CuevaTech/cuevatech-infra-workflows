@@ -25,6 +25,7 @@ jobs:
       - name: Install
         run: npm ci
       - name: Typecheck
+        if: hashFiles('tsconfig.json') != ''
         run: npx tsc --noEmit
       - name: Lint
         run: npm run lint --if-present

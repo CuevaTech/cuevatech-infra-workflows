@@ -1,12 +1,12 @@
 name: CI
 
-# Reusable padre. Hoy solo node; multi-lenguaje a futuro se agrega como jobs
-# adicionales con su propio if (sin tocar a los callers).
+# Reusable padre. Multi-lenguaje: cada lang agrega un job con su propio if,
+# sin tocar a los callers existentes.
 on:
   workflow_call:
     inputs:
       lang:
-        description: Lenguaje del proyecto (node).
+        description: Lenguaje del proyecto (node | python).
         required: true
         type: string
 
@@ -14,3 +14,7 @@ jobs:
   node:
     if: ${{ inputs.lang == 'node' }}
     uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci-node.yml@main
+
+  python:
+    if: ${{ inputs.lang == 'python' }}
+    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci-python.yml@main

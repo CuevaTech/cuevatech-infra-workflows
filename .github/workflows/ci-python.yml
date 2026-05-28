@@ -1,0 +1,67 @@
+name: CI Python
+
+# CI para proyectos Python. Mismo patron que ci-node:
+#   - checks: typecheck (mypy si hay config) + lint (ruff si hay config)
+#   - test:   pytest si hay carpeta tests/ o archivos test_*.py / *_test.py
+# Sin asumir nada project-specific: cada step skip si el proyecto no trae la
+# config correspondiente. Scan de imagen lo hace build-image.
+on:
+  workflow_call:
+    inputs:
+      python_version:
+        description: Versión de Python.
+        required: false
+        type: string
+        default: "3.11"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+      - name: Install runtime deps
+        run: |
+          [ -f requirements.txt ] && pip install -r requirements.txt || true
+      - name: Install dev deps
+        run: |
+          [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || true
+      - name: Typecheck (mypy)
+        if: hashFiles('mypy.ini') != ''
+        run: |
+          pip install mypy
+          mypy .
+      - name: Lint (ruff)
+        if: hashFiles('ruff.toml') != '' || hashFiles('.ruff.toml') != ''
+        run: |
+          pip install ruff
+          ruff check .
+      # Scans de dependencias/codigo (Snyk OSS + Snyk Code, CodeQL, Trivy fs)
+      # van aqui a futuro (analisis a nivel de fuente, sin imagen).
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+      - name: Install
+        run: |
+          [ -f requirements.txt ] && pip install -r requirements.txt || true
+          [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || true
+      - name: Test (pytest)
+        shell: bash
+        run: |
+          shopt -s nullglob
+          tests=(tests test_*.py *_test.py)
+          if [ ${#tests[@]} -gt 0 ]; then
+            pip install pytest
+            pytest
+          else
+            echo "no tests detected, skipping"
+          fi
