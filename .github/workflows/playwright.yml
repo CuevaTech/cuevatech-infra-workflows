@@ -1,0 +1,66 @@
+name: E2E Playwright
+
+# Pruebas e2e de navegador con Playwright contra un frontend YA desplegado.
+# Nivel qa de los repos frontend (no aplica a backends). Si el repo no trae
+# playwright.config.*, el job se salta (onboarding gradual).
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: URL del frontend qa a probar (exporta PLAYWRIGHT_BASE_URL).
+        required: false
+        type: string
+        default: ""
+      node_version:
+        description: Version de Node.
+        required: false
+        type: string
+        default: "20"
+      working_directory:
+        description: Directorio del proyecto front (monorepo).
+        required: false
+        type: string
+        default: "."
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+      - name: Detectar config Playwright
+        id: detect
+        shell: bash
+        run: |
+          if ls playwright.config.* >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::sin playwright.config.*, salto e2e playwright"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install deps
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Install browsers
+        if: steps.detect.outputs.found == 'true'
+        run: npx playwright install --with-deps
+      - name: Run Playwright
+        if: steps.detect.outputs.found == 'true'
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+        run: npx playwright test
+      - name: Upload report
+        if: ${{ always() && steps.detect.outputs.found == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ${{ inputs.working_directory }}/playwright-report
+          if-no-files-found: ignore

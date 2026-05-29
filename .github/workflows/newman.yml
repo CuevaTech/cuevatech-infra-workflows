@@ -1,0 +1,76 @@
+name: E2E Newman
+
+# Pruebas de integracion/e2e de APIs con newman (Postman CLI) contra un entorno
+# YA desplegado. Nivel qa: el artefacto ya esta deployado, esto valida su
+# comportamiento HTTP real. Generico para cualquier microservicio backend.
+# Si el repo no trae coleccion, el job se salta (onboarding gradual).
+on:
+  workflow_call:
+    inputs:
+      collection:
+        description: Ruta a la coleccion Postman en el repo.
+        required: false
+        type: string
+        default: tests/postman/collection.json
+      environment:
+        description: Ruta al environment Postman (opcional).
+        required: false
+        type: string
+        default: ""
+      base_url:
+        description: Override de la var base_url de la coleccion (opcional).
+        required: false
+        type: string
+        default: ""
+      node_version:
+        description: Version de Node para newman.
+        required: false
+        type: string
+        default: "20"
+    secrets:
+      API_KEY:
+        description: API key inyectada como var api_key en la coleccion (opcional).
+        required: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+      - name: Run newman
+        shell: bash
+        env:
+          COLLECTION: ${{ inputs.collection }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BASE_URL: ${{ inputs.base_url }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          if [ ! -f "$COLLECTION" ]; then
+            echo "::warning::no se encontro coleccion '$COLLECTION', salto e2e newman"
+            exit 0
+          fi
+          npm install -g newman
+          args=(run "$COLLECTION" --reporters cli,json --reporter-json-export newman-report.json)
+          if [ -n "$ENVIRONMENT" ] && [ -f "$ENVIRONMENT" ]; then
+            args+=(-e "$ENVIRONMENT")
+          fi
+          if [ -n "$BASE_URL" ]; then
+            args+=(--env-var "base_url=$BASE_URL")
+          fi
+          if [ -n "$API_KEY" ]; then
+            args+=(--env-var "api_key=$API_KEY")
+          fi
+          # newman sale != 0 si falla una asercion => corta el pipeline qa.
+          newman "${args[@]}"
+      - name: Upload newman report
+        if: ${{ always() && hashFiles('newman-report.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-report
+          path: newman-report.json
+          if-no-files-found: ignore
