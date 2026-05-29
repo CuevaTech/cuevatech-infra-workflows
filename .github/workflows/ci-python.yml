@@ -57,11 +57,14 @@ jobs:
       - name: Test (pytest)
         shell: bash
         run: |
-          # Existence check real: 'tests' es literal sin wildcard, nullglob no
-          # lo elimina aunque el dir no exista. Usar -d / compgen.
-          if [ -d tests ] || compgen -G "test_*.py" > /dev/null || compgen -G "*_test.py" > /dev/null; then
+          # Corre pytest solo si existen archivos de test Python reales (no un
+          # simple dir 'tests' que puede tener otros artefactos, ej. colecciones
+          # Postman en tests/postman). Ademas tolera exit 5 de pytest
+          # ("no se colecto ningun test") como no-fallo.
+          has_py=$(find . -name '.git' -prune -o \( -name 'test_*.py' -o -name '*_test.py' \) -print 2>/dev/null | head -1)
+          if [ -n "$has_py" ]; then
             pip install pytest
-            pytest
+            pytest || { ec=$?; if [ "$ec" -eq 5 ]; then echo "pytest: no tests collected"; else exit "$ec"; fi; }
           else
-            echo "no tests detected, skipping"
+            echo "no python tests detected, skipping"
           fi
