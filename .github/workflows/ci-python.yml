@@ -39,8 +39,8 @@ jobs:
         run: |
           pip install ruff
           ruff check .
-      # Scans de dependencias/codigo (Snyk OSS + Snyk Code, CodeQL, Trivy fs)
-      # van aqui a futuro (analisis a nivel de fuente, sin imagen).
+      # SAST CodeQL vive en codeql.yml (reusable aparte, lo llama el caller).
+      # Scans SCA (Snyk OSS, Trivy fs) van aqui a futuro.
 
   test:
     runs-on: ubuntu-latest

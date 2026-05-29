@@ -1,0 +1,132 @@
+name: CodeQL
+
+# SAST con CodeQL. Genera el SARIF localmente (upload:false) y NO lo sube a
+# GitHub code scanning — eso requiere GitHub Advanced Security en repos
+# privados. En su lugar el SARIF va a DefectDojo (panel unificado, mismo flujo
+# que el reporte Trivy de build-image).
+# Gate: bloquea el run si hay findings de severidad CRITICAL
+# (security-severity >= 9.0 en el SARIF de CodeQL).
+on:
+  workflow_call:
+    inputs:
+      lang:
+        description: Lenguaje del proyecto (node | python).
+        required: true
+        type: string
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      env:
+        description: Entorno (dev, qa, staging, prod) — contexto DefectDojo.
+        required: true
+        type: string
+      microservice:
+        description: Nombre del microservicio — contexto DefectDojo.
+        required: true
+        type: string
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Map lenguaje -> CodeQL
+        id: lang
+        shell: bash
+        run: |
+          case "${{ inputs.lang }}" in
+            node)   echo "ql=javascript-typescript" >> "$GITHUB_OUTPUT" ;;
+            python) echo "ql=python" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::lang no soportado: ${{ inputs.lang }}"; exit 1 ;;
+          esac
+
+      # build-mode none: lenguajes interpretados (python/js) no compilan, no
+      # hace falta autobuild.
+      - name: CodeQL init
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ steps.lang.outputs.ql }}
+          build-mode: none
+
+      - name: CodeQL analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          upload: false
+          output: codeql-results
+
+      - name: Localizar SARIF
+        id: sarif
+        shell: bash
+        run: |
+          f=$(ls codeql-results/*.sarif 2>/dev/null | head -1)
+          if [ -z "$f" ]; then echo "::error::no se genero SARIF"; exit 1; fi
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+
+      # Sube a DefectDojo. No bloquea: si falta URL/token o no responde, sigue.
+      # El corte real lo hace el gate de mas abajo.
+      - name: Upload SARIF a DefectDojo
+        if: ${{ always() && vars.DEFECTDOJO_URL != '' && steps.sarif.outputs.file != '' }}
+        continue-on-error: true
+        env:
+          DD_URL: ${{ vars.DEFECTDOJO_URL }}
+          DD_TOKEN: ${{ secrets.DEFECTDOJO_TOKEN }}
+          PRODUCT: ${{ inputs.product }}
+          MS: ${{ inputs.microservice }}
+          ENVIRON: ${{ inputs.env }}
+          SARIF: ${{ steps.sarif.outputs.file }}
+          COMMIT: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if [ -z "$DD_TOKEN" ]; then
+            echo "DEFECTDOJO_TOKEN vacio, salto upload"; exit 0
+          fi
+          http=$(curl -sS -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
+            -H "Authorization: Token $DD_TOKEN" \
+            -F "scan_type=SARIF" \
+            -F "file=@${SARIF}" \
+            -F "auto_create_context=true" \
+            -F "product_type_name=${PRODUCT}" \
+            -F "product_name=${PRODUCT}-${MS}" \
+            -F "engagement_name=${ENVIRON}" \
+            -F "commit_hash=${COMMIT}" \
+            -F "branch_tag=${BRANCH}" \
+            -F "build_id=${RUN_ID}" \
+            -F "source_code_management_uri=${REPO_URL}" \
+            -F "active=true" -F "verified=false" \
+            -F "minimum_severity=Info" \
+            -o /tmp/dd-resp.json -w "%{http_code}")
+          echo "DefectDojo upload HTTP $http"
+          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
+            echo "::error::DefectDojo upload fallo (HTTP $http)"
+            cat /tmp/dd-resp.json || true
+            exit 1
+          fi
+
+      # Gate: security-severity es escala CVSS; CodeQL marca CRITICAL >= 9.0.
+      - name: Gate CRITICAL
+        shell: bash
+        env:
+          SARIF: ${{ steps.sarif.outputs.file }}
+        run: |
+          crit=$(jq '
+            [ .runs[]
+              | ( (.tool.driver.rules // []) + ([ .tool.extensions[]?.rules[]? ]) ) as $rules
+              | .results[]?
+              | (.ruleId // .rule.id) as $rid
+              | ( $rules[] | select(.id == $rid) | .properties."security-severity"? )
+              | select(. != null) | tonumber
+              | select(. >= 9.0)
+            ] | length
+          ' "$SARIF")
+          echo "Findings CRITICAL: ${crit:-0}"
+          if [ "${crit:-0}" -gt 0 ]; then
+            echo "::error::CodeQL encontro ${crit} finding(s) CRITICAL (security-severity >= 9.0)"
+            exit 1
+          fi
