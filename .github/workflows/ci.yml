@@ -1,5 +1,12 @@
 name: CI
 
+# DEPRECADO. Convencion nueva: el caller invoca el reusable hoja directo
+#   (ci-node.yml | ci-python.yml) en vez de este dispatcher con `lang`.
+# Motivo: el job hermano con `if` falso queda como nodo "skipped" (circulo
+# hueco) en el grafo del run. Llamar la hoja directo => grafo solo con lo que
+# ejecuta. Se mantiene funcional para callers aun no migrados; no agregar
+# callers nuevos aqui.
+#
 # Reusable padre. Multi-lenguaje: cada lang agrega un job con su propio if,
 # sin tocar a los callers existentes.
 on:

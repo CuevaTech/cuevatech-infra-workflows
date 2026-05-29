@@ -1,5 +1,12 @@
 name: CD
 
+# DEPRECADO. Convencion nueva: el caller invoca el reusable hoja directo
+#   (cd-lambda.yml | cd-argocd.yml) en vez de este dispatcher con `type`.
+# Motivo: el job hermano con `if` falso queda como nodo "skipped" (circulo
+# hueco) en el grafo del run. Llamar la hoja directo => grafo solo con lo que
+# ejecuta. Se mantiene funcional para callers aun no migrados; no agregar
+# callers nuevos aqui.
+#
 # Dispatcher de deploy. El caller declara product/env/microservice + type y la
 # imagen ya construida (image_uri de build-image). Segun type rutea al reusable
 # correspondiente. GitHub no permite `uses:` dinamico, por eso bloques if.
