@@ -3,7 +3,9 @@ name: E2E Newman
 # Pruebas de integracion/e2e de APIs con newman (Postman CLI) contra un entorno
 # YA desplegado. Nivel qa: el artefacto ya esta deployado, esto valida su
 # comportamiento HTTP real. Generico para cualquier microservicio backend.
-# Si el repo no trae coleccion, el job se salta (onboarding gradual).
+# Si el caller declara este job, la coleccion es OBLIGATORIA: el job FALLA si no
+# existe (no hay e2e silenciosamente saltado). El repo debe traer al menos un
+# smoke en la ruta indicada por `collection` (ver ejemplo tests/postman/).
 on:
   workflow_call:
     inputs:
@@ -51,8 +53,8 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
         run: |
           if [ ! -f "$COLLECTION" ]; then
-            echo "::warning::no se encontro coleccion '$COLLECTION', salto e2e newman"
-            exit 0
+            echo "::error::no se encontro coleccion '$COLLECTION'. e2e newman es obligatorio en qa: agrega la coleccion Postman (ver ejemplo en tests/postman/)."
+            exit 1
           fi
           npm install -g newman
           args=(run "$COLLECTION" --reporters cli,json --reporter-json-export newman-report.json)

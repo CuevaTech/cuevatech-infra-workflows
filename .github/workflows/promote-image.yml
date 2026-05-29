@@ -30,7 +30,17 @@ on:
         required: true
         type: string
       image_name:
-        description: Override opcional del nombre del repo/imagen ECR.
+        description: Override del nombre repo/imagen ECR (aplica a src y dst si no se dan los de abajo).
+        required: false
+        type: string
+        default: ""
+      src_image_name:
+        description: Override del repo ECR ORIGEN. Default image_name o <product>-<microservice>.
+        required: false
+        type: string
+        default: ""
+      dst_image_name:
+        description: Override del repo ECR DESTINO. Default image_name o <product>-<microservice>.
         required: false
         type: string
         default: ""
@@ -88,12 +98,17 @@ jobs:
           fi
 
       - id: repo
-        name: Resolve ECR repo name
+        name: Resolve ECR repo names (src/dst)
         env:
           IMAGE_NAME: ${{ inputs.image_name }}
+          SRC_IMAGE_NAME: ${{ inputs.src_image_name }}
+          DST_IMAGE_NAME: ${{ inputs.dst_image_name }}
           PRODUCT: ${{ inputs.product }}
           MS: ${{ inputs.microservice }}
-        run: echo "name=${IMAGE_NAME:-${PRODUCT}-${MS}}" >> "$GITHUB_OUTPUT"
+        run: |
+          default="${IMAGE_NAME:-${PRODUCT}-${MS}}"
+          echo "src_name=${SRC_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
+          echo "dst_name=${DST_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
 
       # ────────────────────────────────────────────────────────────────────
       # INTRA-ACCOUNT path: docker pull + tag + push, mismo registry.
@@ -113,7 +128,8 @@ jobs:
         if: steps.mode.outputs.is_cross == 'false'
         name: Find + retag + push (intra)
         env:
-          REPO: ${{ steps.repo.outputs.name }}
+          SRC_REPO: ${{ steps.repo.outputs.src_name }}
+          DST_REPO: ${{ steps.repo.outputs.dst_name }}
           REGION: ${{ steps.dst.outputs.region }}
           REGISTRY: ${{ steps.dst.outputs.registry }}
           SRC_ENV: ${{ inputs.src_env }}
@@ -135,17 +151,21 @@ jobs:
 
           pattern="^${src_prefix}${SHORT_SHA}-[0-9]+$"
           src_tag=$(aws ecr describe-images \
-            --repository-name "$REPO" --region "$REGION" \
+            --repository-name "$SRC_REPO" --region "$REGION" \
             --query "reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]" \
             --output text | tr '\t' '\n' | grep -E "$pattern" | head -1 || true)
           if [ -z "$src_tag" ]; then
-            echo "::error::No se encontro imagen con patron '${pattern}' en repo ${REPO}."
+            echo "::error::No se encontro imagen con patron '${pattern}' en repo ${SRC_REPO}. El build de ${SRC_ENV} debe correr antes."
             exit 1
           fi
+          # Asegura el repo destino (en layout de 2 ECRs puede ser distinto al origen).
+          aws ecr describe-repositories --repository-names "$DST_REPO" --region "$REGION" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "$DST_REPO" --region "$REGION" \
+                 --image-scanning-configuration scanOnPush=true
           core="${src_tag#${src_prefix}}"
           dst_tag="${dst_prefix}${core}"
-          src_uri="${REGISTRY}/${REPO}:${src_tag}"
-          dst_uri="${REGISTRY}/${REPO}:${dst_tag}"
+          src_uri="${REGISTRY}/${SRC_REPO}:${src_tag}"
+          dst_uri="${REGISTRY}/${DST_REPO}:${dst_tag}"
           echo "Pulling  $src_uri"
           docker pull "$src_uri"
           docker tag "$src_uri" "$dst_uri"
@@ -172,7 +192,7 @@ jobs:
         if: steps.mode.outputs.is_cross == 'true'
         name: Find src tag en cuenta SRC
         env:
-          REPO: ${{ steps.repo.outputs.name }}
+          REPO: ${{ steps.repo.outputs.src_name }}
           REGION: ${{ steps.src.outputs.region }}
           SRC_ENV: ${{ inputs.src_env }}
         run: |
@@ -227,7 +247,7 @@ jobs:
       - name: Ensure DST repo (cross)
         if: steps.mode.outputs.is_cross == 'true'
         env:
-          REPO: ${{ steps.repo.outputs.name }}
+          REPO: ${{ steps.repo.outputs.dst_name }}
           REGION: ${{ steps.dst.outputs.region }}
         run: |
           aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" >/dev/null 2>&1 \
@@ -249,7 +269,8 @@ jobs:
         if: steps.mode.outputs.is_cross == 'true'
         name: Crane copy SRC -> DST
         env:
-          REPO: ${{ steps.repo.outputs.name }}
+          SRC_REPO: ${{ steps.repo.outputs.src_name }}
+          DST_REPO: ${{ steps.repo.outputs.dst_name }}
           SRC_REGISTRY: ${{ steps.src.outputs.registry }}
           DST_REGISTRY: ${{ steps.dst.outputs.registry }}
           DST_ENV: ${{ inputs.dst_env }}
@@ -270,8 +291,8 @@ jobs:
           dst_prefix=$(prefix_for "$DST_ENV")
           core="${SRC_TAG#${src_prefix}}"
           dst_tag="${dst_prefix}${core}"
-          src_uri="${SRC_REGISTRY}/${REPO}:${SRC_TAG}"
-          dst_uri="${DST_REGISTRY}/${REPO}:${dst_tag}"
+          src_uri="${SRC_REGISTRY}/${SRC_REPO}:${SRC_TAG}"
+          dst_uri="${DST_REGISTRY}/${DST_REPO}:${dst_tag}"
           echo "Copying $src_uri -> $dst_uri"
           crane copy "$src_uri" "$dst_uri"
           {
