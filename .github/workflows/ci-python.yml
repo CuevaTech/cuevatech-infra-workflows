@@ -57,9 +57,9 @@ jobs:
       - name: Test (pytest)
         shell: bash
         run: |
-          shopt -s nullglob
-          tests=(tests test_*.py *_test.py)
-          if [ ${#tests[@]} -gt 0 ]; then
+          # Existence check real: 'tests' es literal sin wildcard, nullglob no
+          # lo elimina aunque el dir no exista. Usar -d / compgen.
+          if [ -d tests ] || compgen -G "test_*.py" > /dev/null || compgen -G "*_test.py" > /dev/null; then
             pip install pytest
             pytest
           else
