@@ -64,40 +64,39 @@ jobs:
           SERVER: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          case "$STATUS" in
-            success) ICON="✅" ;;
-            cancelled) ICON="⚪" ;;
-            *) ICON="🔴" ;;
-          esac
-          REPO_URL="${SERVER}/${REPO}"
-          RUN_URL="${SERVER}/${REPO}/actions/runs/${RUN_ID}"
-          SHORT_SHA="${SHA:0:7}"
-          COMMIT_URL="${SERVER}/${REPO}/commit/${SHA}"
-
-          text="${ICON} *${TITLE}* — <${REPO_URL}|${REPO}> (\`${BRANCH}\`)"
-          text="${text}\n*Resultado:* ${STATUS}"
-          [ -n "$SUMMARY" ] && text="${text}\n*Fases:* ${SUMMARY}"
-          text="${text}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>"
-
-          if [ -n "$FAILED_TESTS" ]; then
-            tag=""
-            [ "$INFORMATIONAL" = "true" ] && tag=" (informativo, no bloquea)"
-            text="${text}\n*Tests fallidos${tag}:*"
-            while IFS= read -r line; do
-              [ -n "$line" ] && text="${text}\n• ${line}"
-            done <<< "$FAILED_TESTS"
-          fi
-
-          links="<${RUN_URL}|Ver run>"
-          [ -n "$DD_URL" ] && links="${links}  ·  <${DD_URL}|Ver en DefectDojo>"
-          text="${text}\n${links}"
-
-          # JSON-escape para el payload
-          python3 - "$text" <<'PY' >> "$GITHUB_OUTPUT"
-          import json, sys
-          print("text<<EOF")
-          print(json.dumps(sys.argv[1])[1:-1])
-          print("EOF")
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, os
+          st = os.environ.get("STATUS", "")
+          icon = {"success": "✅", "cancelled": "⚪"}.get(st, "🔴")
+          repo = os.environ["REPO"]; server = os.environ["SERVER"]
+          branch = os.environ.get("BRANCH", ""); sha = os.environ.get("SHA", "")
+          run_id = os.environ.get("RUN_ID", "")
+          repo_url = f"{server}/{repo}"
+          run_url = f"{server}/{repo}/actions/runs/{run_id}"
+          commit_url = f"{server}/{repo}/commit/{sha}"
+          lines = [
+              f"{icon} *{os.environ.get('TITLE','')}* — <{repo_url}|{repo}> (`{branch}`)",
+              f"*Resultado:* {st}",
+          ]
+          summary = os.environ.get("SUMMARY", "")
+          if summary:
+              lines.append(f"*Fases:* {summary}")
+          lines.append(f"*Commit:* <{commit_url}|{sha[:7]}>")
+          ft = os.environ.get("FAILED_TESTS", "").strip()
+          if ft:
+              tag = " (informativo, no bloquea)" if os.environ.get("INFORMATIONAL") == "true" else ""
+              lines.append(f"*Tests fallidos{tag}:*")
+              for ln in ft.splitlines():
+                  if ln.strip():
+                      lines.append(f"• {ln.strip()}")
+          links = f"<{run_url}|Ver run>"
+          dd = os.environ.get("DD_URL", "")
+          if dd:
+              links += f"  ·  <{dd}|Ver en DefectDojo>"
+          lines.append(links)
+          text = "\n".join(lines)
+          # json.dumps -> string con \n escapados (valido en una linea de OUTPUT)
+          print("text=" + json.dumps(text)[1:-1])
           PY
 
       - name: Send to Slack
