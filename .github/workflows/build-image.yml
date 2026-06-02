@@ -36,6 +36,9 @@ on:
       image_uri:
         description: URI completa de la imagen pusheada (con tag).
         value: ${{ jobs.build.outputs.image_uri }}
+      defectdojo_url:
+        description: Link al test en DefectDojo (vacio si no hubo upload).
+        value: ${{ jobs.build.outputs.defectdojo_url }}
     secrets:
       DEFECTDOJO_TOKEN:
         description: Token API DefectDojo para subir el reporte de scan (opcional).
@@ -49,6 +52,7 @@ jobs:
       contents: read
     outputs:
       image_uri: ${{ steps.meta.outputs.image_uri }}
+      defectdojo_url: ${{ steps.dd.outputs.url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -139,6 +143,7 @@ jobs:
       # Sube el reporte a DefectDojo (panel unificado de hallazgos). No bloquea:
       # si falta URL/token o DefectDojo no responde, el build continua.
       - name: Upload report to DefectDojo
+        id: dd
         if: ${{ always() && vars.DEFECTDOJO_URL != '' && hashFiles('trivy-report.json') != '' }}
         continue-on-error: true
         env:
@@ -178,6 +183,8 @@ jobs:
             cat /tmp/dd-resp.json || true
             exit 1
           fi
+          tid=$(python3 -c "import json,sys;print(json.load(open('/tmp/dd-resp.json')).get('test',''))" 2>/dev/null || true)
+          [ -n "$tid" ] && echo "url=${DD_URL%/}/test/${tid}" >> "$GITHUB_OUTPUT"
 
       # Gate: bloquea (exit 1) solo ante CRITICAL con fix disponible, asi no se
       # publica una imagen con vulnerabilidades criticas.

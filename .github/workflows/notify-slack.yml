@@ -1,0 +1,116 @@
+name: Notify Slack
+
+# Reusable de notificacion. Postea a Slack el resultado de un run via bot token
+# (chat.postMessage). El caller arma el resumen y elige el canal por entorno.
+# Si no existe el secret SLACK_BOT_TOKEN, el envio se salta solo (no rompe).
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Channel ID o nombre (#canal) de Slack.
+        required: true
+        type: string
+      title:
+        description: Titulo, ej. "CI/CD develop".
+        required: true
+        type: string
+      status:
+        description: Resultado global del run (success | failure | cancelled).
+        required: true
+        type: string
+      summary:
+        description: Resumen por fase en mrkdwn, ej. "CI ✅ · build ✅ · deploy 🔴".
+        required: false
+        type: string
+        default: ""
+      failed_tests:
+        description: Lista (multilinea) de tests fallidos; vacio si no hay.
+        required: false
+        type: string
+        default: ""
+      tests_informational:
+        description: Si los tests son informativos (no bloquean) en este entorno.
+        required: false
+        type: boolean
+        default: false
+      defectdojo_url:
+        description: Link al reporte en DefectDojo; vacio si no hubo scan.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SLACK_BOT_TOKEN:
+        required: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+    steps:
+      - name: Compose message
+        id: msg
+        if: ${{ env.SLACK_BOT_TOKEN != '' }}
+        env:
+          STATUS: ${{ inputs.status }}
+          TITLE: ${{ inputs.title }}
+          SUMMARY: ${{ inputs.summary }}
+          FAILED_TESTS: ${{ inputs.failed_tests }}
+          INFORMATIONAL: ${{ inputs.tests_informational }}
+          DD_URL: ${{ inputs.defectdojo_url }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          SERVER: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          case "$STATUS" in
+            success) ICON="✅" ;;
+            cancelled) ICON="⚪" ;;
+            *) ICON="🔴" ;;
+          esac
+          REPO_URL="${SERVER}/${REPO}"
+          RUN_URL="${SERVER}/${REPO}/actions/runs/${RUN_ID}"
+          SHORT_SHA="${SHA:0:7}"
+          COMMIT_URL="${SERVER}/${REPO}/commit/${SHA}"
+
+          text="${ICON} *${TITLE}* — <${REPO_URL}|${REPO}> (\`${BRANCH}\`)"
+          text="${text}\n*Resultado:* ${STATUS}"
+          [ -n "$SUMMARY" ] && text="${text}\n*Fases:* ${SUMMARY}"
+          text="${text}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>"
+
+          if [ -n "$FAILED_TESTS" ]; then
+            tag=""
+            [ "$INFORMATIONAL" = "true" ] && tag=" (informativo, no bloquea)"
+            text="${text}\n*Tests fallidos${tag}:*"
+            while IFS= read -r line; do
+              [ -n "$line" ] && text="${text}\n• ${line}"
+            done <<< "$FAILED_TESTS"
+          fi
+
+          links="<${RUN_URL}|Ver run>"
+          [ -n "$DD_URL" ] && links="${links}  ·  <${DD_URL}|Ver en DefectDojo>"
+          text="${text}\n${links}"
+
+          # JSON-escape para el payload
+          python3 - "$text" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys
+          print("text<<EOF")
+          print(json.dumps(sys.argv[1])[1:-1])
+          print("EOF")
+          PY
+
+      - name: Send to Slack
+        if: ${{ env.SLACK_BOT_TOKEN != '' }}
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ env.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ inputs.channel }}",
+              "text": "${{ steps.msg.outputs.text }}",
+              "blocks": [
+                { "type": "section", "text": { "type": "mrkdwn", "text": "${{ steps.msg.outputs.text }}" } }
+              ]
+            }

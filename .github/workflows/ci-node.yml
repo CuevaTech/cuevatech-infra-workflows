@@ -12,6 +12,18 @@ on:
         required: false
         type: string
         default: "24"
+      tests_required:
+        description: Si false, los tests NO bloquean (informativos); se reportan pero el job pasa.
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      tests_outcome:
+        description: Resultado real de los tests (success | failure), aunque sean informativos.
+        value: ${{ jobs.test.outputs.tests_outcome }}
+      failed_tests:
+        description: Lista (multilinea) de tests fallidos.
+        value: ${{ jobs.test.outputs.failed_tests }}
 
 jobs:
   checks:
@@ -34,6 +46,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    outputs:
+      tests_outcome: ${{ steps.collect.outputs.tests_outcome }}
+      failed_tests: ${{ steps.collect.outputs.failed_tests }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,4 +58,22 @@ jobs:
       - name: Install
         run: npm ci
       - name: Test
-        run: npm test --if-present
+        id: run
+        continue-on-error: ${{ inputs.tests_required == false }}
+        run: |
+          set -o pipefail
+          npm test --if-present 2>&1 | tee /tmp/test-out.txt
+      - name: Collect results
+        id: collect
+        if: always()
+        run: |
+          echo "tests_outcome=${{ steps.run.outcome }}" >> "$GITHUB_OUTPUT"
+          fails=$(grep -E '^[[:space:]]*not ok ' /tmp/test-out.txt 2>/dev/null \
+            | sed -E 's/.*not ok [0-9]+ - //' \
+            | grep -viE 'subtests? failed' \
+            | head -15 || true)
+          {
+            echo "failed_tests<<EOF"
+            echo "$fails"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
