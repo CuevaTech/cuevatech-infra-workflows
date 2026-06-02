@@ -68,9 +68,11 @@ jobs:
         if: always()
         run: |
           echo "tests_outcome=${{ steps.run.outcome }}" >> "$GITHUB_OUTPUT"
-          fails=$(grep -E '^[[:space:]]*not ok ' /tmp/test-out.txt 2>/dev/null \
-            | sed -E 's/.*not ok [0-9]+ - //' \
-            | grep -viE 'subtests? failed' \
+          # node:test (tsx --test) usa el reporter spec. Tomar solo la seccion
+          # final "✖ failing tests:" (ahi van los tests fallidos, no los suites).
+          fails=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/test-out.txt 2>/dev/null \
+            | awk '/^✖ failing tests:/{f=1;next} f && /^✖ /{print}' \
+            | sed -E 's/^✖ +//; s/ \([0-9.]+m?s\)$//' \
             | head -15 || true)
           {
             echo "failed_tests<<EOF"
