@@ -7,9 +7,6 @@ name: Notify Slack
 on:
   workflow_call:
     inputs:
-      channel:
-        required: true
-        type: string
       title:
         required: true
         type: string
@@ -148,6 +145,15 @@ jobs:
               links += f"  ·  <{dd}|Ver en DefectDojo>"
           L.append(links)
           print("text=" + json.dumps("\n".join(L))[1:-1])
+          # Canal por entorno, resuelto DENTRO del reusable (no lo pasa el caller).
+          b = os.environ.get("BRANCH", "")
+          if b == "main":
+              ch = "cicd-cuevatech-prod"
+          elif b in ("qa", "staging"):
+              ch = "cicd-cuevatech-qa"
+          else:
+              ch = "cicd-cuevatech-dev"  # develop, feature/*
+          print("channel=" + ch)
           PY
 
       - name: Send to Slack
@@ -158,7 +164,7 @@ jobs:
           token: ${{ env.SLACK_BOT_TOKEN }}
           payload: |
             {
-              "channel": "${{ inputs.channel }}",
+              "channel": "${{ steps.msg.outputs.channel }}",
               "text": "${{ steps.msg.outputs.text }}",
               "blocks": [
                 { "type": "section", "text": { "type": "mrkdwn", "text": "${{ steps.msg.outputs.text }}" } }
