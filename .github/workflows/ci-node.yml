@@ -1,33 +1,49 @@
 name: CI Node
 
-# CI para proyectos Node. Separado en dos jobs paralelos:
+# CI para proyectos Node. Dos jobs paralelos:
 #   - checks: typecheck + lint (analisis estatico)
 #   - test:   pruebas
-# El scan de la imagen NO va aqui (necesita la imagen); lo hace build-image.
+# Inputs tests_required / checks_required: si false, esa etapa NO bloquea
+# (informativa) y se expone su resultado + detalle para notificar.
 on:
   workflow_call:
     inputs:
       node_version:
-        description: Versión de Node.
         required: false
         type: string
         default: "24"
       tests_required:
-        description: Si false, los tests NO bloquean (informativos); se reportan pero el job pasa.
+        description: Si false, los tests NO bloquean (informativos).
+        required: false
+        type: boolean
+        default: true
+      checks_required:
+        description: Si false, typecheck/lint NO bloquean (informativos).
         required: false
         type: boolean
         default: true
     outputs:
+      tsc_outcome:
+        value: ${{ jobs.checks.outputs.tsc_outcome }}
+      tsc_error:
+        value: ${{ jobs.checks.outputs.tsc_error }}
+      lint_outcome:
+        value: ${{ jobs.checks.outputs.lint_outcome }}
+      lint_error:
+        value: ${{ jobs.checks.outputs.lint_error }}
       tests_outcome:
-        description: Resultado real de los tests (success | failure), aunque sean informativos.
         value: ${{ jobs.test.outputs.tests_outcome }}
       failed_tests:
-        description: Lista (multilinea) de tests fallidos.
         value: ${{ jobs.test.outputs.failed_tests }}
 
 jobs:
   checks:
     runs-on: ubuntu-latest
+    outputs:
+      tsc_outcome: ${{ steps.tsc.outcome }}
+      lint_outcome: ${{ steps.lint.outcome }}
+      tsc_error: ${{ steps.collect.outputs.tsc_error }}
+      lint_error: ${{ steps.collect.outputs.lint_error }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,12 +53,26 @@ jobs:
       - name: Install
         run: npm ci
       - name: Typecheck
+        id: tsc
         if: hashFiles('tsconfig.json') != ''
-        run: npx tsc --noEmit
+        continue-on-error: ${{ inputs.checks_required == false }}
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee /tmp/tsc.txt
       - name: Lint
-        run: npm run lint --if-present
-      # SAST CodeQL vive en codeql.yml (reusable aparte, lo llama el caller).
-      # Scans SCA (Snyk OSS, Trivy fs) van aqui a futuro.
+        id: lint
+        continue-on-error: ${{ inputs.checks_required == false }}
+        run: |
+          set -o pipefail
+          npm run lint --if-present 2>&1 | tee /tmp/lint.txt
+      - name: Collect checks
+        id: collect
+        if: always()
+        run: |
+          tsc_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/tsc.txt 2>/dev/null | grep -m1 -E 'error TS' | head -c 300 | tr '\n' ' ' || true)
+          lint_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/lint.txt 2>/dev/null | grep -m1 -E 'problems \(|^Error:|should be|Cannot' | head -c 300 | tr '\n' ' ' || true)
+          { echo "tsc_error<<EOF"; echo "$tsc_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "lint_error<<EOF"; echo "$lint_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
   test:
     runs-on: ubuntu-latest
@@ -74,8 +104,4 @@ jobs:
             | awk '/^✖ failing tests:/{f=1;next} f && /^✖ /{print}' \
             | sed -E 's/^✖ +//; s/ \([0-9.]+m?s\)$//' \
             | head -15 || true)
-          {
-            echo "failed_tests<<EOF"
-            echo "$fails"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          { echo "failed_tests<<EOF"; echo "$fails"; echo "EOF"; } >> "$GITHUB_OUTPUT"

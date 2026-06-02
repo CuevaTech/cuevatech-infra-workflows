@@ -1,40 +1,64 @@
 name: Notify Slack
 
-# Reusable de notificacion. Postea a Slack el resultado de un run via bot token
-# (chat.postMessage). El caller arma el resumen y elige el canal por entorno.
+# Reusable de notificacion. Postea a Slack (bot token, chat.postMessage) el
+# resultado de un run con desglose por fase (typecheck/lint/test/promote/build/
+# deploy) + detalle del error y tests fallidos. El caller pasa los outcomes.
 # Si no existe el secret SLACK_BOT_TOKEN, el envio se salta solo (no rompe).
 on:
   workflow_call:
     inputs:
       channel:
-        description: Channel ID o nombre (#canal) de Slack.
         required: true
         type: string
       title:
-        description: Titulo, ej. "CI/CD develop".
         required: true
         type: string
       status:
-        description: Resultado global del run (success | failure | cancelled).
+        description: Resultado global (success | failure | cancelled).
         required: true
         type: string
-      summary:
-        description: Resumen por fase en mrkdwn, ej. "CI ✅ · build ✅ · deploy 🔴".
+      informational:
+        description: Si las etapas CI son informativas (no bloquean) en este entorno.
+        required: false
+        type: boolean
+        default: false
+      tsc_outcome:
+        required: false
+        type: string
+        default: ""
+      tsc_error:
+        required: false
+        type: string
+        default: ""
+      lint_outcome:
+        required: false
+        type: string
+        default: ""
+      lint_error:
+        required: false
+        type: string
+        default: ""
+      tests_outcome:
         required: false
         type: string
         default: ""
       failed_tests:
-        description: Lista (multilinea) de tests fallidos; vacio si no hay.
         required: false
         type: string
         default: ""
-      tests_informational:
-        description: Si los tests son informativos (no bloquean) en este entorno.
+      promote_outcome:
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ""
+      build_outcome:
+        required: false
+        type: string
+        default: ""
+      deploy_outcome:
+        required: false
+        type: string
+        default: ""
       defectdojo_url:
-        description: Link al reporte en DefectDojo; vacio si no hubo scan.
         required: false
         type: string
         default: ""
@@ -54,9 +78,16 @@ jobs:
         env:
           STATUS: ${{ inputs.status }}
           TITLE: ${{ inputs.title }}
-          SUMMARY: ${{ inputs.summary }}
+          INFORMATIONAL: ${{ inputs.informational }}
+          TSC_OUTCOME: ${{ inputs.tsc_outcome }}
+          TSC_ERROR: ${{ inputs.tsc_error }}
+          LINT_OUTCOME: ${{ inputs.lint_outcome }}
+          LINT_ERROR: ${{ inputs.lint_error }}
+          TESTS_OUTCOME: ${{ inputs.tests_outcome }}
           FAILED_TESTS: ${{ inputs.failed_tests }}
-          INFORMATIONAL: ${{ inputs.tests_informational }}
+          PROMOTE_OUTCOME: ${{ inputs.promote_outcome }}
+          BUILD_OUTCOME: ${{ inputs.build_outcome }}
+          DEPLOY_OUTCOME: ${{ inputs.deploy_outcome }}
           DD_URL: ${{ inputs.defectdojo_url }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
@@ -66,37 +97,57 @@ jobs:
         run: |
           python3 - >> "$GITHUB_OUTPUT" <<'PY'
           import json, os
+          def e(o):
+              return {"success": "✅", "failure": "🔴", "cancelled": "⚪",
+                      "skipped": "⏭️"}.get(o, "•")
           st = os.environ.get("STATUS", "")
           icon = {"success": "✅", "cancelled": "⚪"}.get(st, "🔴")
           repo = os.environ["REPO"]; server = os.environ["SERVER"]
           branch = os.environ.get("BRANCH", ""); sha = os.environ.get("SHA", "")
           run_id = os.environ.get("RUN_ID", "")
+          info = " (informativo)" if os.environ.get("INFORMATIONAL") == "true" else ""
           repo_url = f"{server}/{repo}"
           run_url = f"{server}/{repo}/actions/runs/{run_id}"
           commit_url = f"{server}/{repo}/commit/{sha}"
-          lines = [
+          L = [
               f"{icon} *{os.environ.get('TITLE','')}* — <{repo_url}|{repo}> (`{branch}`)",
               f"*Resultado:* {st}",
+              f"*Commit:* <{commit_url}|{sha[:7]}>",
           ]
-          summary = os.environ.get("SUMMARY", "")
-          if summary:
-              lines.append(f"*Fases:* {summary}")
-          lines.append(f"*Commit:* <{commit_url}|{sha[:7]}>")
+          # Desglose por fase (solo las que aplican = outcome no vacio)
+          phases = [
+              ("Typecheck", "TSC_OUTCOME", info),
+              ("Lint", "LINT_OUTCOME", info),
+              ("Test", "TESTS_OUTCOME", info),
+              ("Promote", "PROMOTE_OUTCOME", ""),
+              ("Build", "BUILD_OUTCOME", ""),
+              ("Deploy", "DEPLOY_OUTCOME", ""),
+          ]
+          rows = []
+          for label, key, tag in phases:
+              o = os.environ.get(key, "").strip()
+              if o:
+                  rows.append(f"• {label}: {e(o)} {o}{tag if o == 'failure' else ''}")
+          if rows:
+              L.append("*Fases:*")
+              L.extend(rows)
+          # Detalle de errores
+          if os.environ.get("TSC_OUTCOME") == "failure" and os.environ.get("TSC_ERROR", "").strip():
+              L.append(f"*Typecheck:* `{os.environ['TSC_ERROR'].strip()}`")
+          if os.environ.get("LINT_OUTCOME") == "failure" and os.environ.get("LINT_ERROR", "").strip():
+              L.append(f"*Lint:* `{os.environ['LINT_ERROR'].strip()}`")
           ft = os.environ.get("FAILED_TESTS", "").strip()
           if ft:
-              tag = " (informativo, no bloquea)" if os.environ.get("INFORMATIONAL") == "true" else ""
-              lines.append(f"*Tests fallidos{tag}:*")
+              L.append("*Tests fallidos:*")
               for ln in ft.splitlines():
                   if ln.strip():
-                      lines.append(f"• {ln.strip()}")
+                      L.append(f"• {ln.strip()}")
           links = f"<{run_url}|Ver run>"
-          dd = os.environ.get("DD_URL", "")
+          dd = os.environ.get("DD_URL", "").strip()
           if dd:
               links += f"  ·  <{dd}|Ver en DefectDojo>"
-          lines.append(links)
-          text = "\n".join(lines)
-          # json.dumps -> string con \n escapados (valido en una linea de OUTPUT)
-          print("text=" + json.dumps(text)[1:-1])
+          L.append(links)
+          print("text=" + json.dumps("\n".join(L))[1:-1])
           PY
 
       - name: Send to Slack
