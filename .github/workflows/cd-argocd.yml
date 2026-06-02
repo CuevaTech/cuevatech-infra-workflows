@@ -72,16 +72,15 @@ jobs:
             exit 1
           fi
 
-          # Repo ECR esperado en la linea de imagen, para parchar el contenedor correcto.
-          export REPO="${PRODUCT}-${MS}"
           export IMAGE_URI
 
-          before=$(grep -c "image:" "$file" || true)
-          yq -i '(.spec.template.spec.containers[] | select(.image | test("/" + strenv(REPO) + ":")) | .image) = strenv(IMAGE_URI)' "$file"
+          # Selecciona el contenedor por nombre (= microservicio) y reemplaza la
+          # imagen COMPLETA, sin importar el placeholder previo.
+          yq -i '(.spec.template.spec.containers[] | select(.name == strenv(MS)) | .image) = strenv(IMAGE_URI)' "$file"
 
-          # Confirma que la imagen objetivo quedo escrita; si no, el repo no matcheo.
+          # Confirma que la imagen quedo escrita; si no, no existe el contenedor.
           if ! grep -q "$IMAGE_URI" "$file"; then
-            echo "::error::no se encontro un contenedor con imagen .../$REPO: en $file"
+            echo "::error::no se encontro contenedor name=$MS en $file"
             exit 1
           fi
 
