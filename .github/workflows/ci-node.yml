@@ -70,7 +70,7 @@ jobs:
         if: always()
         run: |
           tsc_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/tsc.txt 2>/dev/null | grep -m1 -E 'error TS' | head -c 300 | tr '\n' ' ' || true)
-          lint_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/lint.txt 2>/dev/null | grep -m1 -E 'problems \(|^Error:|should be|Cannot' | head -c 300 | tr '\n' ' ' || true)
+          lint_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/lint.txt 2>/dev/null | grep -m1 -A1 -E '^Error:|[0-9]+ problems \(' | tr '\n\t' '  ' | sed -E 's/  +/ /g' | head -c 400 || true)
           { echo "tsc_error<<EOF"; echo "$tsc_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
           { echo "lint_error<<EOF"; echo "$lint_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
