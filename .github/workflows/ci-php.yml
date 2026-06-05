@@ -1,0 +1,125 @@
+name: CI PHP
+
+# CI para proyectos PHP / Laravel. Misma interfaz que ci-node (inputs+outputs)
+# para que el caller y notify-slack sean uniformes:
+#   - checks: syntax (php -l, mapeado a tsc_outcome) + lint (Pint, lint_outcome)
+#   - test:   phpunit / artisan test si hay phpunit.xml
+# Cada step skip si el proyecto no trae la herramienta. Scan de imagen = build-image.
+on:
+  workflow_call:
+    inputs:
+      php_version:
+        description: Versión de PHP.
+        required: false
+        type: string
+        default: "8.2"
+      tests_required:
+        description: Si false, los tests NO bloquean (informativos).
+        required: false
+        type: boolean
+        default: true
+      checks_required:
+        description: Si false, syntax/lint NO bloquean (informativos).
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      tsc_outcome:
+        value: ${{ jobs.checks.outputs.tsc_outcome }}
+      tsc_error:
+        value: ${{ jobs.checks.outputs.tsc_error }}
+      lint_outcome:
+        value: ${{ jobs.checks.outputs.lint_outcome }}
+      lint_error:
+        value: ${{ jobs.checks.outputs.lint_error }}
+      tests_outcome:
+        value: ${{ jobs.test.outputs.tests_outcome }}
+      failed_tests:
+        value: ${{ jobs.test.outputs.failed_tests }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      tsc_outcome: ${{ steps.tsc.outcome }}
+      lint_outcome: ${{ steps.lint.outcome }}
+      tsc_error: ${{ steps.collect.outputs.tsc_error }}
+      lint_error: ${{ steps.collect.outputs.lint_error }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php_version }}
+          tools: composer
+          coverage: none
+      - name: Install
+        run: |
+          [ -f composer.json ] && composer install --no-interaction --no-progress --prefer-dist || true
+      - name: Syntax (php -l)
+        id: tsc
+        if: hashFiles('**/*.php') != ''
+        continue-on-error: ${{ inputs.checks_required == false }}
+        run: |
+          set -o pipefail
+          find . -path ./vendor -prune -o -name '*.php' -print0 \
+            | xargs -0 -n1 -P4 php -l 2>&1 \
+            | { grep -v 'No syntax errors detected' || true; } | tee /tmp/php-l.txt
+      - name: Lint (Pint)
+        id: lint
+        continue-on-error: ${{ inputs.checks_required == false }}
+        run: |
+          set -o pipefail
+          if [ -x vendor/bin/pint ]; then
+            vendor/bin/pint --test 2>&1 | tee /tmp/lint.txt
+          else
+            echo "Pint no instalado, skip" | tee /tmp/lint.txt
+          fi
+      - name: Collect checks
+        id: collect
+        if: always()
+        run: |
+          tsc_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/php-l.txt 2>/dev/null | grep -m1 -iE 'error|parse' | head -c 300 | tr '\n' ' ' || true)
+          lint_err=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/lint.txt 2>/dev/null | grep -m1 -iE 'FAIL|error' | head -c 300 | tr '\n' ' ' || true)
+          { echo "tsc_error<<EOF"; echo "$tsc_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "lint_error<<EOF"; echo "$lint_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+  test:
+    runs-on: ubuntu-latest
+    outputs:
+      tests_outcome: ${{ steps.collect.outputs.tests_outcome }}
+      failed_tests: ${{ steps.collect.outputs.failed_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php_version }}
+          tools: composer
+          coverage: none
+      - name: Install
+        run: |
+          [ -f composer.json ] && composer install --no-interaction --no-progress --prefer-dist || true
+      - name: Test
+        id: run
+        continue-on-error: ${{ inputs.tests_required == false }}
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ -f phpunit.xml ] || [ -f phpunit.xml.dist ]; then
+            if [ -f artisan ]; then
+              php artisan test 2>&1 | tee /tmp/test-out.txt
+            elif [ -x vendor/bin/phpunit ]; then
+              vendor/bin/phpunit 2>&1 | tee /tmp/test-out.txt
+            else
+              echo "phpunit.xml presente pero sin runner, skip" | tee /tmp/test-out.txt
+            fi
+          else
+            echo "sin phpunit.xml, skipping" | tee /tmp/test-out.txt
+          fi
+      - name: Collect results
+        id: collect
+        if: always()
+        run: |
+          echo "tests_outcome=${{ steps.run.outcome }}" >> "$GITHUB_OUTPUT"
+          fails=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/test-out.txt 2>/dev/null \
+            | grep -iE 'FAILED|✕|✗| failures?:' | head -15 || true)
+          { echo "failed_tests<<EOF"; echo "$fails"; echo "EOF"; } >> "$GITHUB_OUTPUT"
