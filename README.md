@@ -43,6 +43,8 @@ push → CI (tsc/lint/test) → build (imagen→ECR + scan) → CD (segun type) 
 |---|---|
 | `ci.yml` | Padre de CI. Hoy `lang: node`; multi-lenguaje a futuro (additivo). |
 | `ci-node.yml` | `npm ci` + `tsc --noEmit` + `eslint` + `test`. |
+| `sonar-scan.yml` | Gate de calidad **SonarQube** Community. Corre `sonarqube-scan-action` con `qualitygate.wait`: el job falla si el Quality Gate del proyecto queda rojo. projectKey = nombre del repo. Se invoca en PR → `develop2`. |
+| `codeql.yml` | **SAST** con CodeQL: genera SARIF, lo sube a DefectDojo y corta si hay findings CRITICAL. |
 | `build-image.yml` | Build Docker → ECR (OIDC). Tag `SHORT_SHA-TIMESTAMP`, **nunca `:latest`**. Trivy scan (gate CRITICAL) + sube reporte a DefectDojo. |
 | `cd.yml` | Dispatcher de deploy. Rutea por `type`. |
 | `cd-argocd.yml` | `type=kubernetes`: parcha la imagen en el repo de manifests y pushea → ArgoCD reconcilia (pull). |
@@ -88,6 +90,13 @@ Regla: **1 rama = 1 ambiente**.
 
 > En el repo template las ramas de prueba son provisionales: dev = `ci-cd-develop`,
 > staging = `ci-cd-stagging`. Las reales serán `develop`/`qa`/`staging`/`main`.
+
+**Etapa `feature` (lo que corre antes de integrar):** sobre cada push a una rama
+`feature/**` y sobre el PR hacia `develop2` se ejecutan las pruebas de CI
+(typecheck, lint, tests). Además, el PR hacia `develop2` dispara el **gate de
+calidad SonarQube** (`sonar-scan.yml`): si el Quality Gate del proyecto queda
+rojo, el merge se bloquea. Así, el código se valida y se mide su calidad antes
+de entrar a la rama de integración. Detalle de cada prueba en §9.
 
 ---
 
@@ -170,16 +179,37 @@ OIDC: cada cuenta tiene el provider GitHub + role `github-actions-deployer`
 
 ## 9. Seguridad / análisis
 
-| Análisis | Herramienta | Comportamiento |
-|---|---|---|
-| Typecheck | `tsc --noEmit` | falla CI |
-| Lint | `eslint` | falla CI (errores; warnings no) |
-| Vulns deps + OS | Trivy (image) | **gate**: bloquea push si CRITICAL con fix |
-| Secrets en imagen | Trivy | reportado |
-| Reporte completo | Trivy JSON (todas severidades) | sube a DefectDojo (no bloquea) |
+| Análisis | Herramienta | Etapa | Qué hace |
+|---|---|---|---|
+| Typecheck | `tsc --noEmit` | feature / CI | valida tipos TypeScript en todo el repo |
+| Lint | `eslint` | feature / CI | estilo y errores estáticos de código |
+| Tests unitarios | `jest` | feature / CI | corre la suite de pruebas del repo |
+| Calidad de código | SonarQube Community | PR → develop2 | bugs, vulnerabilities, code smells, duplicación, cobertura |
+| Vulns deps + OS | Trivy (image) | build | **gate**: bloquea si CRITICAL con fix |
+| Secrets en imagen | Trivy | build | reportado |
+| SAST | CodeQL | build/CI | análisis semántico del código fuente → DefectDojo |
 
 El gate y el reporte son pasos separados: el reporte registra TODO (incluido lo
 no-bloqueante) aunque el gate corte el build.
+
+### 9.1 Qué valida cada prueba
+
+- **Typecheck (`tsc --noEmit`)** — corre el compilador de TypeScript en modo
+  solo-verificación (no emite JS). Detecta errores de tipos, imports rotos y
+  contratos mal usados antes de construir la imagen. Etapa feature.
+- **Lint (`eslint`)** — reglas de estilo y patrones peligrosos (variables sin
+  usar, `==` vs `===`, promesas sin `await`, etc.). Etapa feature.
+- **Tests unitarios (`jest`)** — ejecuta la suite del repo; verifica la lógica
+  de cada módulo de forma aislada. Etapa feature.
+- **SonarQube** — mide la calidad del código: bugs, vulnerabilidades, code
+  smells, duplicación y cobertura. Corre como gate en el PR hacia `develop2`;
+  si el Quality Gate del proyecto queda rojo, el merge se bloquea. Un proyecto
+  por repo (projectKey = nombre del repo).
+- **Trivy** — escanea la imagen Docker: vulnerabilidades de dependencias y del
+  SO base, más secrets embebidos. Bloquea el build si hay CRITICAL con fix
+  disponible; el reporte completo (todas las severidades) va a DefectDojo.
+- **CodeQL** — análisis estático de seguridad (SAST) del código fuente; genera
+  SARIF y lo registra en DefectDojo, cortando ante findings CRITICAL.
 
 ---
 
@@ -196,37 +226,71 @@ Panel unificado de vulnerabilidades/hallazgos de CI/CD.
 
 ---
 
-## 11. Lo que tenemos vs. lo "pro" (production-grade)
+## 11. Tecnologías en uso — qué es y qué falta
 
-Estado actual del pipeline y hacia dónde debe evolucionar.
+Cada área del pipeline está cubierta. Aquí qué hace cada tecnología hoy y qué
+quedaría por reforzar.
 
-| Área | Tenemos hoy | Pro (objetivo) |
-|---|---|---|
-| CI checks | tsc, eslint, test | + Snyk OSS/Code, CodeQL, SonarQube |
-| Scan imagen | Trivy vuln + secret, gate CRITICAL | + Trivy IaC/misconfig, license, SBOM |
-| Firma imagen | — | cosign sign + verify en deploy |
-| Build | multi-stage alpine + cache gha | + multi-arch (arm64), distroless, non-root |
-| Deploy k8s | cd-argocd: patch + push (GitOps) | + gate de health/sync, rollback automático |
-| Deploy lambda | update-function-code | + alias canary, rollback a versión N-1 |
-| Promoción qa→prod | cada rama buildea su imagen | promover por **digest** (crane, cross-account): imagen bit-exacta dev→prod |
-| Gobernanza | — | branch protection + required checks + CODEOWNERS + Environments con reviewers (prod 2 + wait) |
-| Secrets runtime | ESO (k8s) / SSM `secrets:` (lambda) | + rotación, cero `.env` |
-| Migraciones DB | manual | job pre-deploy / init container versionado |
-| Notificaciones | logs de Actions | + Slack ok/fail + métricas en Grafana |
-| Tests e2e | — | Playwright contra qa con seed de data |
-| Registro de hallazgos | DefectDojo (Trivy) | DefectDojo con todos los scanners + SLAs/triage |
-| ECR | tag inmutable SHA-TS | + lifecycle (prod keep 5, dev/qa 30d, untagged 7d) |
-| OIDC | role deployer con AdministratorAccess | least-privilege por servicio/cuenta |
-| Runners | GitHub-hosted | self-hosted K8s (ARC) en EKS: BuildKit remoto + cache compartido + IRSA + Karpenter spot |
-| Granularidad jobs | CI: checks + test (jobs); build: 1 job con steps | build/scan/push como jobs separados (requiere ARC o registro intermedio) |
+### GitHub Actions — workflows reutilizables
+**Qué es:** el motor de CI/CD. Toda la lógica vive en este repo como reusables
+(`workflow_call`); cada microservicio declara un caller delgado.
+**Hoy:** CI, build y CD centralizados; agregar un micro = copiar un caller.
+**Falta:** runners self-hosted (hoy GitHub-hosted); separar build/scan/push en
+jobs independientes.
 
-### Roadmap (orden sugerido)
-1. Gobernanza (branch protection + required checks) — barato, alto impacto.
-2. Snyk + CodeQL → DefectDojo.
-3. Promoción por digest (qa→prod) + cosign.
-4. Rollback por target + notifs Slack.
-5. ECR lifecycle + OIDC least-privilege.
-6. **Runners K8s (ARC)** en EKS: BuildKit remoto (cache compartido) + IRSA + Karpenter spot. Habilita separación total build/scan/push y saca el build de runners GitHub-hosted. Proyecto de infra aparte.
+### SonarQube (Community, self-hosted)
+**Qué es:** plataforma de análisis estático de calidad: mide bugs,
+vulnerabilidades, code smells, duplicación y cobertura. Corre en EKS
+`eks-worldbinary-app-v1` (`https://sonarqube.worldbinary.pro`).
+**Hoy:** gate bloqueante en el PR hacia `develop2` (`sonar-scan.yml`); un
+proyecto por repo. Si el Quality Gate queda rojo, no se mergea.
+**Falta:** alimentar la cobertura (`lcov`) al scanner para que el gate la mida;
+branch analysis / PR decoration nativos (sólo en edición de pago — en
+evaluación vía AWS Marketplace).
+
+### Trivy — escaneo de imagen
+**Qué es:** escáner de vulnerabilidades de contenedores: dependencias, paquetes
+del SO base y secrets embebidos.
+**Hoy:** corre en `build-image`; bloquea el build ante CRITICAL con fix; el
+reporte completo va a DefectDojo.
+**Falta:** escaneo de IaC/misconfig, licencias y generación de SBOM.
+
+### CodeQL — SAST
+**Qué es:** análisis semántico de seguridad del código fuente (SAST) de GitHub.
+**Hoy:** reusable `codeql.yml` disponible; genera SARIF a DefectDojo con gate
+CRITICAL.
+**Falta:** cablearlo en los callers de `develop` (aún no activo por repo).
+
+### DefectDojo — panel de hallazgos
+**Qué es:** plataforma que centraliza los hallazgos de seguridad de todos los
+escáneres en un solo panel, con deduplicación y tendencia.
+**Hoy:** recibe los reportes de Trivy (y CodeQL); un Product por microservicio,
+un Engagement por ambiente.
+**Falta:** sumar todos los escáneres y definir SLAs/triage de hallazgos.
+
+### ECR — registro de imágenes
+**Qué es:** registro privado de imágenes Docker en AWS.
+**Hoy:** una imagen por build, tag inmutable `SHA-TIMESTAMP`, nunca `:latest`.
+**Falta:** política de lifecycle (retención por ambiente, limpieza de untagged).
+
+### OIDC — autenticación a AWS
+**Qué es:** federación OIDC entre GitHub Actions y AWS; el pipeline asume un rol
+sin credenciales de larga vida.
+**Hoy:** cada cuenta tiene el provider + role `github-actions-deployer`, con
+trust por prefijo de repo.
+**Falta:** permisos least-privilege por servicio/cuenta (hoy el rol es amplio).
+
+### ArgoCD — deploy Kubernetes (GitOps)
+**Qué es:** controlador GitOps que reconcilia el estado del cluster contra el
+repo de manifests.
+**Hoy:** `cd-argocd` parcha la imagen en el repo de manifests y pushea; ArgoCD
+sincroniza por pull.
+**Falta:** gate de health/sync post-deploy y rollback automático.
+
+### Deploy Lambda
+**Qué es:** despliegue de funciones Lambda basadas en imagen.
+**Hoy:** `cd-lambda` hace `update-function-code --image-uri`.
+**Falta:** alias canary y rollback a la versión anterior.
 
 ---
 
@@ -235,5 +299,7 @@ Estado actual del pipeline y hacia dónde debe evolucionar.
 - ✅ Reusables CI + build + CD (kubernetes/lambda).
 - ✅ OIDC en las cuentas; `accounts.json` con región por ambiente.
 - ✅ DefectDojo desplegado + integrado en `build-image`.
+- ✅ Gate SonarQube en PR → `develop2` (self-hosted, `sonar-scan.yml`).
 - ⏳ Callers por ambiente en cada app, manifests de apps en dev/qa, promoción
-  prod, gobernanza, scans adicionales (ver tabla §11).
+  prod, gobernanza (branch protection), cobertura → Sonar y CodeQL por repo
+  (ver detalle §11).
