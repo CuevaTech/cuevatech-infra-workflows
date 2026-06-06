@@ -1,0 +1,74 @@
+name: SonarQube
+
+# Analisis de calidad/seguridad con SonarQube Community (self-hosted en
+# worldcenter, eks-worldbinary-app-v1, https://sonarqube.worldbinary.pro).
+#
+# Gate bloqueante: corre el scanner con `sonar.qualitygate.wait=true`. Si el
+# Quality Gate del proyecto queda ROJO, el scanner termina != 0 y este job
+# falla. Con branch protection en `develop2` exigiendo este check, el merge del
+# PR queda bloqueado hasta que el gate pase.
+#
+# Community NO tiene branch analysis ni PR decoration (solo ediciones de pago
+# via AWS Marketplace, en evaluacion). Por eso 1 projectKey por repo (= nombre
+# del repo) y el scan del PR sobrescribe el dashboard del proyecto; el corte
+# real lo da el `qualitygate.wait` sobre el codigo del PR, no la decoracion.
+on:
+  workflow_call:
+    inputs:
+      project_key:
+        description: Override del projectKey. Default = nombre del repo.
+        required: false
+        type: string
+        default: ""
+    # SONAR_TOKEN llega por `secrets: inherit` del caller.
+    # SONAR_HOST_URL es variable de org/repo (vars.SONAR_HOST_URL).
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth 0: el scanner usa el historial git para blame/new-code.
+          fetch-depth: 0
+
+      - name: Resolver projectKey
+        id: pk
+        shell: bash
+        run: |
+          key="${{ inputs.project_key }}"
+          if [ -z "$key" ]; then
+            key="${{ github.event.repository.name }}"
+          fi
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "projectKey: $key"
+
+      - name: Validar configuracion
+        shell: bash
+        env:
+          HOST: ${{ vars.SONAR_HOST_URL }}
+          TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$HOST" ]; then
+            echo "::error::vars.SONAR_HOST_URL vacio (definir https://sonarqube.worldbinary.pro)"; exit 1
+          fi
+          if [ -z "$TOKEN" ]; then
+            echo "::error::secrets.SONAR_TOKEN vacio"; exit 1
+          fi
+
+      # Accion oficial. Lee SONAR_HOST_URL y SONAR_TOKEN del entorno.
+      # qualitygate.wait=true => bloquea el job si el gate queda rojo.
+      # sonar.sources/exclusions vienen del sonar-project.properties del repo.
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ steps.pk.outputs.key }}
+            -Dsonar.projectName=${{ steps.pk.outputs.key }}
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
