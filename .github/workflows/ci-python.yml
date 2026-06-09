@@ -13,6 +13,25 @@ on:
         required: false
         type: string
         default: "3.11"
+      product:
+        description: Producto (worldbinary...). Vacio = no se pushea métrica al dashboard.
+        required: false
+        type: string
+        default: ""
+      microservice:
+        description: Nombre del microservicio. Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+      env:
+        description: Entorno (dev, qa...). Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
+        required: false
 
 jobs:
   checks:
@@ -30,17 +49,80 @@ jobs:
         run: |
           [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || true
       - name: Typecheck (mypy)
+        id: mypy
         if: hashFiles('mypy.ini') != ''
         run: |
           pip install mypy
           mypy .
       - name: Lint (ruff)
+        id: ruff
         if: hashFiles('ruff.toml') != '' || hashFiles('.ruff.toml') != ''
         run: |
           pip install ruff
           ruff check .
       # SAST CodeQL vive en codeql.yml (reusable aparte, lo llama el caller).
-      # Scans SCA (Snyk OSS, Trivy fs) van aqui a futuro.
+
+      # SCA: scan de dependencias del codigo fuente (requirements ya instalados).
+      # Solo corre cuando hay contexto (gate dev), no en feature (feedback rapido).
+      # No bloquea (exit 0): por ahora solo reporta al dashboard (check=sca).
+      - name: SCA scan (Trivy fs)
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy-fs.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+      - name: SCA summary
+        id: sca
+        if: ${{ always() && hashFiles('trivy-fs.json') != '' }}
+        run: |
+          R=trivy-fs.json
+          sev() { jq -r --arg s "$1" '[.Results[]?.Vulnerabilities[]? | select(.Severity==$s)] | length' "$R" 2>/dev/null || echo 0; }
+          crit=$(sev CRITICAL); high=$(sev HIGH); med=$(sev MEDIUM); low=$(sev LOW); unk=$(sev UNKNOWN)
+          critfix=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" and ((.FixedVersion // "") != ""))] | length' "$R" 2>/dev/null || echo 0)
+          echo "SCA: CRITICAL=$crit (fixable=$critfix) HIGH=$high MEDIUM=$med LOW=$low"
+          if [ "${critfix:-0}" -gt 0 ]; then status=0; else status=1; fi
+          {
+            echo "status=$status"
+            echo "extra<<EOF"
+            echo "cicd_vulnerabilities{severity=\"CRITICAL\"} $crit"
+            echo "cicd_vulnerabilities{severity=\"HIGH\"} $high"
+            echo "cicd_vulnerabilities{severity=\"MEDIUM\"} $med"
+            echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
+            echo "cicd_vulnerabilities{severity=\"UNKNOWN\"} $unk"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Push SCA metrics
+        if: ${{ always() && inputs.microservice != '' && steps.sca.outputs.status != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: sca
+          status: ${{ steps.sca.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: ${{ steps.sca.outputs.extra }}
+
+      - name: Push lint metrics
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: lint
+          status: ${{ (steps.mypy.outcome != 'failure' && steps.ruff.outcome != 'failure') && '1' || '0' }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
 
   test:
     runs-on: ubuntu-latest
@@ -55,6 +137,7 @@ jobs:
           [ -f requirements.txt ] && pip install -r requirements.txt || true
           [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || true
       - name: Test (pytest)
+        id: run
         shell: bash
         run: |
           # Corre pytest solo si existen archivos de test Python reales (no un
@@ -68,3 +151,17 @@ jobs:
           else
             echo "no python tests detected, skipping"
           fi
+
+      - name: Push unit metrics
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: unit
+          status: ${{ steps.run.outcome != 'failure' && '1' || '0' }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}

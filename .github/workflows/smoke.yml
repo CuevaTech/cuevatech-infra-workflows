@@ -1,0 +1,114 @@
+name: Smoke
+
+# Smoke test READ-ONLY post-deploy. Pensado para el gate de prod: confirma que
+# el artefacto (ya validado en dev/qa) realmente levantó con la config/secrets
+# del entorno destino. NO muta data, NO ataca: solo GET de salud + endpoints
+# criticos. Es lo unico que captura fallos especificos del entorno (secret mal
+# puesto, var faltante, conectividad a DB prod) que dev/qa no pueden ver.
+# Reporta al dashboard como check=smoke.
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: URL base del entorno desplegado (ej. https://tv.worldbinary.pro).
+        required: true
+        type: string
+      health_path:
+        description: Path de health (Express bajo /v1 => /v1/health; raw => /health).
+        required: false
+        type: string
+        default: /health
+      paths:
+        description: >-
+          Paths GET extra a verificar, separados por coma. "Vivo" = responde
+          HTTP < 500 (401/403 cuentan como vivo). Ej "/v1/status,/v1/info".
+        required: false
+        type: string
+        default: ""
+      timeout:
+        description: Segundos máximos esperando que /health responda 2xx/3xx.
+        required: false
+        type: number
+        default: 90
+      product:
+        description: Producto (worldbinary...). Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+      microservice:
+        description: Nombre del microservicio. Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+      env:
+        description: Entorno (prod...). Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
+        required: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Smoke (health + endpoints)
+        id: smoke
+        shell: bash
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          HEALTH_PATH: ${{ inputs.health_path }}
+          PATHS: ${{ inputs.paths }}
+          TIMEOUT: ${{ inputs.timeout }}
+        run: |
+          base="${BASE_URL%/}"
+          hp="/${HEALTH_PATH#/}"
+          # 1) Health con reintentos (el deploy puede tardar en levantar).
+          ok=0; deadline=$(( $(date +%s) + ${TIMEOUT:-90} ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "${base}${hp}" || echo 000)
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then ok=1; echo "health ${hp} -> $code OK"; break; fi
+            echo "health ${hp} -> $code, reintentando..."; sleep 5
+          done
+          # 2) Endpoints extra: vivos si responden < 500.
+          bad_paths=0
+          if [ -n "$PATHS" ]; then
+            IFS=',' read -ra arr <<< "$PATHS"
+            for p in "${arr[@]}"; do
+              p="$(echo "$p" | xargs)"; [ -z "$p" ] && continue
+              p="/${p#/}"
+              code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "${base}${p}" || echo 000)
+              if [ "$code" -ge 500 ] || [ "$code" -eq 000 ]; then
+                echo "::warning::endpoint ${p} -> $code (caido)"; bad_paths=$((bad_paths+1))
+              else
+                echo "endpoint ${p} -> $code vivo"
+              fi
+            done
+          fi
+          if [ "$ok" -eq 1 ] && [ "$bad_paths" -eq 0 ]; then status=1; else status=0; fi
+          echo "Smoke: health_ok=$ok endpoints_caidos=$bad_paths -> status=$status"
+          {
+            echo "status=$status"
+            echo "extra=cicd_tests{outcome=\"failed\"} $bad_paths"
+          } >> "$GITHUB_OUTPUT"
+          # Bloquea el gate si el smoke falla (deploy roto en prod).
+          [ "$status" -eq 1 ]
+
+      - name: Push smoke metrics
+        if: ${{ always() && inputs.microservice != '' && steps.smoke.outputs.status != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: smoke
+          status: ${{ steps.smoke.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: ${{ steps.smoke.outputs.extra }}

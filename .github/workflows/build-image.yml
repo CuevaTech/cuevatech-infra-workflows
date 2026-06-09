@@ -32,16 +32,22 @@ on:
         required: false
         type: string
         default: Dockerfile
+      push:
+        description: >-
+          Si true (default) construye, escanea con Trivy y PUSHEA la imagen a
+          ECR. Si false (gate de PR) solo construye + escanea + reporta al
+          dashboard, sin pushear ni tocar ECR. Permite gatear el PR sin ensuciar
+          el registry.
+        required: false
+        type: boolean
+        default: true
     outputs:
       image_uri:
         description: URI completa de la imagen pusheada (con tag).
         value: ${{ jobs.build.outputs.image_uri }}
-      defectdojo_url:
-        description: Link al test en DefectDojo (vacio si no hubo upload).
-        value: ${{ jobs.build.outputs.defectdojo_url }}
     secrets:
-      DEFECTDOJO_TOKEN:
-        description: Token API DefectDojo para subir el reporte de scan (opcional).
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
         required: false
 
 jobs:
@@ -52,7 +58,6 @@ jobs:
       contents: read
     outputs:
       image_uri: ${{ steps.meta.outputs.image_uri }}
-      defectdojo_url: ${{ steps.dd.outputs.url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,12 +68,14 @@ jobs:
           env: ${{ inputs.env }}
 
       - name: AWS credentials (OIDC)
+        if: ${{ inputs.push }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ steps.resolve.outputs.role_arn }}
           aws-region: ${{ steps.resolve.outputs.region }}
 
       - name: Login to ECR
+        if: ${{ inputs.push }}
         uses: aws-actions/amazon-ecr-login@v2
 
       - id: repo
@@ -80,6 +87,7 @@ jobs:
         run: echo "name=${IMAGE_NAME:-${PRODUCT}-${MS}}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure ECR repo
+        if: ${{ inputs.push }}
         env:
           REPO: ${{ steps.repo.outputs.name }}
           REGION: ${{ steps.resolve.outputs.region }}
@@ -129,8 +137,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Reporte completo (todas las severidades) para el panel DefectDojo.
-      # No bloquea (exit 0); el gate de mas abajo es el que corta.
+      # Reporte completo (todas las severidades) para contar y pushear al
+      # dashboard. No bloquea (exit 0); el gate de mas abajo es el que corta.
       - name: Trivy report (JSON)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -140,61 +148,56 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
 
-      # Sube el reporte a DefectDojo (panel unificado de hallazgos). No bloquea:
-      # si falta URL/token o DefectDojo no responde, el build continua.
-      - name: Upload report to DefectDojo
-        id: dd
-        if: ${{ always() && vars.DEFECTDOJO_URL != '' && hashFiles('trivy-report.json') != '' }}
-        continue-on-error: true
-        env:
-          DD_URL: ${{ vars.DEFECTDOJO_URL }}
-          DD_TOKEN: ${{ secrets.DEFECTDOJO_TOKEN }}
-          PRODUCT: ${{ inputs.product }}
-          MS: ${{ inputs.microservice }}
-          ENVIRON: ${{ inputs.env }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          COMMIT: ${{ github.sha }}
-          BRANCH: ${{ github.ref_name }}
-          RUN_ID: ${{ github.run_id }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+      # Resume el reporte: cuenta vulnerabilidades por severidad y decide el
+      # gate (falla si hay CRITICAL con fix disponible). Reemplaza el segundo run
+      # de Trivy: la decision sale del mismo JSON ya generado.
+      - name: Trivy summary + gate decision
+        id: trivy
+        if: ${{ always() && hashFiles('trivy-report.json') != '' }}
         run: |
-          if [ -z "$DD_TOKEN" ]; then
-            echo "DEFECTDOJO_TOKEN vacio, salto upload"; exit 0
-          fi
-          http=$(curl -sS -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
-            -H "Authorization: Token $DD_TOKEN" \
-            -F "scan_type=Trivy Scan" \
-            -F "file=@trivy-report.json" \
-            -F "auto_create_context=true" \
-            -F "product_type_name=${PRODUCT}" \
-            -F "product_name=${PRODUCT}-${MS}" \
-            -F "engagement_name=${ENVIRON}" \
-            -F "version=${TAG}" \
-            -F "commit_hash=${COMMIT}" \
-            -F "branch_tag=${BRANCH}" \
-            -F "build_id=${RUN_ID}" \
-            -F "source_code_management_uri=${REPO_URL}" \
-            -F "active=true" -F "verified=false" \
-            -F "minimum_severity=Info" \
-            -o /tmp/dd-resp.json -w "%{http_code}")
-          echo "DefectDojo upload HTTP $http"
-          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
-            echo "::error::DefectDojo upload fallo (HTTP $http)"
-            cat /tmp/dd-resp.json || true
-            exit 1
-          fi
-          tid=$(python3 -c "import json,sys;print(json.load(open('/tmp/dd-resp.json')).get('test',''))" 2>/dev/null || true)
-          [ -n "$tid" ] && echo "url=${DD_URL%/}/test/${tid}" >> "$GITHUB_OUTPUT"
+          R=trivy-report.json
+          sev() { jq -r --arg s "$1" '[.Results[]?.Vulnerabilities[]? | select(.Severity==$s)] | length' "$R" 2>/dev/null || echo 0; }
+          crit=$(sev CRITICAL); high=$(sev HIGH); med=$(sev MEDIUM); low=$(sev LOW); unk=$(sev UNKNOWN)
+          critfix=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" and ((.FixedVersion // "") != ""))] | length' "$R" 2>/dev/null || echo 0)
+          echo "Trivy: CRITICAL=$crit (fixable=$critfix) HIGH=$high MEDIUM=$med LOW=$low UNKNOWN=$unk"
+          if [ "${critfix:-0}" -gt 0 ]; then status=0; gatefail=1; else status=1; gatefail=0; fi
+          {
+            echo "status=$status"
+            echo "gatefail=$gatefail"
+            echo "extra<<EOF"
+            echo "cicd_vulnerabilities{severity=\"CRITICAL\"} $crit"
+            echo "cicd_vulnerabilities{severity=\"HIGH\"} $high"
+            echo "cicd_vulnerabilities{severity=\"MEDIUM\"} $med"
+            echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
+            echo "cicd_vulnerabilities{severity=\"UNKNOWN\"} $unk"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      # Gate: bloquea (exit 1) solo ante CRITICAL con fix disponible, asi no se
-      # publica una imagen con vulnerabilidades criticas.
-      - name: Trivy gate (CRITICAL)
-        uses: aquasecurity/trivy-action@v0.36.0
+      # Pushea el estado de Trivy al Pushgateway central (dashboard semaforo).
+      - name: Push Trivy metrics
+        if: ${{ always() && steps.trivy.outputs.status != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
         with:
-          image-ref: ${{ steps.meta.outputs.image_uri }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: trivy
+          status: ${{ steps.trivy.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          version: ${{ steps.meta.outputs.tag }}
+          extra: ${{ steps.trivy.outputs.extra }}
+
+      # Gate: bloquea (exit 1) ante CRITICAL con fix disponible. La decision ya
+      # se calculo arriba; aqui solo se corta para no publicar la imagen.
+      - name: Trivy gate (CRITICAL)
+        if: ${{ always() && steps.trivy.outputs.gatefail == '1' }}
+        run: |
+          echo "::error::Trivy gate: hay vulnerabilidades CRITICAL con fix disponible. No se publica la imagen."
+          exit 1
 
       - name: Push image
+        if: ${{ inputs.push }}
         run: docker push ${{ steps.meta.outputs.image_uri }}

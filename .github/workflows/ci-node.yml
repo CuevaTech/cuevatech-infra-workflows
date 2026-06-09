@@ -22,6 +22,25 @@ on:
         required: false
         type: boolean
         default: true
+      product:
+        description: Producto (worldbinary...). Vacio = no se pushea métrica al dashboard.
+        required: false
+        type: string
+        default: ""
+      microservice:
+        description: Nombre del microservicio. Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+      env:
+        description: Entorno (dev, qa...). Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
+        required: false
     outputs:
       tsc_outcome:
         value: ${{ jobs.checks.outputs.tsc_outcome }}
@@ -74,6 +93,71 @@ jobs:
           { echo "tsc_error<<EOF"; echo "$tsc_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
           { echo "lint_error<<EOF"; echo "$lint_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
+      # SCA: scan de dependencias del codigo fuente (lockfile + node_modules ya
+      # instalados por npm ci). Distinto al scan de imagen de build-image.
+      # Solo corre cuando hay contexto (gate dev), no en feature (feedback rapido).
+      # No bloquea (exit 0): por ahora solo reporta al dashboard (check=sca).
+      - name: SCA scan (Trivy fs)
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy-fs.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+      - name: SCA summary
+        id: sca
+        if: ${{ always() && hashFiles('trivy-fs.json') != '' }}
+        run: |
+          R=trivy-fs.json
+          sev() { jq -r --arg s "$1" '[.Results[]?.Vulnerabilities[]? | select(.Severity==$s)] | length' "$R" 2>/dev/null || echo 0; }
+          crit=$(sev CRITICAL); high=$(sev HIGH); med=$(sev MEDIUM); low=$(sev LOW); unk=$(sev UNKNOWN)
+          critfix=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" and ((.FixedVersion // "") != ""))] | length' "$R" 2>/dev/null || echo 0)
+          echo "SCA: CRITICAL=$crit (fixable=$critfix) HIGH=$high MEDIUM=$med LOW=$low"
+          if [ "${critfix:-0}" -gt 0 ]; then status=0; else status=1; fi
+          {
+            echo "status=$status"
+            echo "extra<<EOF"
+            echo "cicd_vulnerabilities{severity=\"CRITICAL\"} $crit"
+            echo "cicd_vulnerabilities{severity=\"HIGH\"} $high"
+            echo "cicd_vulnerabilities{severity=\"MEDIUM\"} $med"
+            echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
+            echo "cicd_vulnerabilities{severity=\"UNKNOWN\"} $unk"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Push SCA metrics
+        if: ${{ always() && inputs.microservice != '' && steps.sca.outputs.status != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: sca
+          status: ${{ steps.sca.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: ${{ steps.sca.outputs.extra }}
+
+      # check=lint en el dashboard = typecheck + lint juntos. Pasa si ninguno falla
+      # (tsc "skipped" cuando no hay tsconfig cuenta como OK).
+      - name: Push lint metrics
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: lint
+          status: ${{ (steps.tsc.outcome != 'failure' && steps.lint.outcome != 'failure') && '1' || '0' }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+
   test:
     runs-on: ubuntu-latest
     outputs:
@@ -105,3 +189,20 @@ jobs:
             | sed -E 's/^✖ +//; s/ \([0-9.]+m?s\)$//' \
             | head -15 || true)
           { echo "failed_tests<<EOF"; echo "$fails"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          fc=$(printf '%s\n' "$fails" | grep -c . || true)
+          echo "failed_count=${fc:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Push unit metrics
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: unit
+          status: ${{ steps.run.outcome != 'failure' && '1' || '0' }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: cicd_tests{outcome="failed"} ${{ steps.collect.outputs.failed_count }}

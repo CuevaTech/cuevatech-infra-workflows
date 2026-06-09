@@ -1,0 +1,101 @@
+name: push-metrics
+description: >-
+  Pushea el estado de una prueba de CI (Trivy, CodeQL, lint, unit, Newman,
+  Playwright) al Pushgateway central (cicd-metrics.worldbinary.pro). Alimenta el
+  dashboard Grafana "CI/CD — Semáforo de pruebas". Nunca rompe el build: si
+  faltan credenciales/contexto o el Pushgateway no responde, solo avisa.
+
+inputs:
+  auth:
+    description: 'Credenciales basicAuth "usuario:clave" (secret PUSHGW_AUTH). Si vacío, se omite el push.'
+    required: false
+    default: ''
+  url:
+    description: URL base del Pushgateway.
+    required: false
+    default: https://cicd-metrics.worldbinary.pro
+  product:
+    description: Producto (worldbinary, worldbinarytv...). Si vacío, se omite el push.
+    required: false
+    default: ''
+  micro:
+    description: Nombre del microservicio. Si vacío, se omite el push.
+    required: false
+    default: ''
+  env:
+    description: Entorno (dev, qa, staging, prod). Si vacío, se omite el push.
+    required: false
+    default: ''
+  check:
+    description: 'Tipo de prueba: trivy|codeql|lint|unit|newman|playwright.'
+    required: true
+  status:
+    description: '1 = pasó, 0 = falló.'
+    required: true
+  branch:
+    description: Rama/tag del build.
+    required: false
+    default: ''
+  build_id:
+    description: ID del run de GitHub Actions (github.run_id).
+    required: false
+    default: ''
+  commit:
+    description: Commit SHA (github.sha).
+    required: false
+    default: ''
+  version:
+    description: Versión/tag de imagen, si aplica.
+    required: false
+    default: ''
+  extra:
+    description: >-
+      Líneas extra de métricas en formato exposición Prometheus, sin los labels
+      de grouping (product/micro/env/check los agrega el Pushgateway). Ej:
+      'cicd_vulnerabilities{severity="CRITICAL"} 2'.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DD_AUTH: ${{ inputs.auth }}
+        URL: ${{ inputs.url }}
+        PRODUCT: ${{ inputs.product }}
+        MICRO: ${{ inputs.micro }}
+        ENVIRON: ${{ inputs.env }}
+        CHECK: ${{ inputs.check }}
+        STATUS: ${{ inputs.status }}
+        BRANCH: ${{ inputs.branch }}
+        BUILD_ID: ${{ inputs.build_id }}
+        COMMIT: ${{ inputs.commit }}
+        VERSION: ${{ inputs.version }}
+        EXTRA: ${{ inputs.extra }}
+      run: |
+        if [ -z "$DD_AUTH" ] || [ -z "$PRODUCT" ] || [ -z "$MICRO" ] || [ -z "$ENVIRON" ]; then
+          echo "push-metrics: falta auth/product/micro/env, se omite el push (no rompe el build)."
+          exit 0
+        fi
+
+        # Cuerpo en formato exposición Prometheus. Los labels de grouping
+        # (product/micro/env/check) NO van aquí: los agrega el Pushgateway desde
+        # la URL. El push reemplaza solo ese grupo.
+        body="cicd_check_status{branch=\"${BRANCH}\"} ${STATUS}
+        cicd_check_info{build_id=\"${BUILD_ID}\",commit=\"${COMMIT}\",version=\"${VERSION}\",branch=\"${BRANCH}\"} 1"
+        if [ -n "$EXTRA" ]; then
+          body="${body}
+        ${EXTRA}"
+        fi
+        # Normalizar indentación accidental del heredoc y garantizar newline final.
+        body="$(printf '%s\n' "$body" | sed 's/^[[:space:]]*//')"
+
+        target="${URL%/}/metrics/job/cicd/product/${PRODUCT}/micro/${MICRO}/env/${ENVIRON}/check/${CHECK}"
+        http=$(printf '%s\n' "$body" | curl -sS --max-time 20 -u "$DD_AUTH" \
+          --data-binary @- -o /dev/null -w "%{http_code}" "$target" || echo "000")
+        if [ "$http" -ge 200 ] && [ "$http" -lt 300 ]; then
+          echo "push-metrics: OK ($CHECK $MICRO/$ENVIRON status=$STATUS) HTTP $http"
+        else
+          echo "::warning::push-metrics: push falló (HTTP $http) para $CHECK $MICRO/$ENVIRON — no rompe el build."
+        fi

@@ -1,0 +1,105 @@
+name: carry-metrics
+description: >-
+  Carry-forward de métricas CI/CD entre entornos. Al promover una imagen
+  (dev→qa, qa→prod) el artefacto es el MISMO, asi que las pruebas de
+  codigo/imagen (Trivy, CodeQL, SCA, lint, unit) dan el mismo resultado: en vez
+  de re-correrlas, este action lee las series cicd_* del entorno origen en el
+  Pushgateway y las re-pushea al entorno destino. Las pruebas propias del
+  destino (E2E en qa, smoke en prod) las corre su propio pipeline aparte.
+  Nunca rompe la promocion: si falta auth o el Pushgateway no responde, avisa.
+
+inputs:
+  auth:
+    description: 'Credenciales basicAuth "usuario:clave" (secret PUSHGW_AUTH). Si vacío, se omite.'
+    required: false
+    default: ''
+  url:
+    description: URL base del Pushgateway.
+    required: false
+    default: https://cicd-metrics.worldbinary.pro
+  product:
+    description: Producto.
+    required: true
+  micro:
+    description: Microservicio.
+    required: true
+  src_env:
+    description: Entorno origen (de donde se copian las métricas).
+    required: true
+  dst_env:
+    description: Entorno destino (a donde se re-pushean).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DD_AUTH: ${{ inputs.auth }}
+        URL: ${{ inputs.url }}
+        PRODUCT: ${{ inputs.product }}
+        MICRO: ${{ inputs.micro }}
+        SRC_ENV: ${{ inputs.src_env }}
+        DST_ENV: ${{ inputs.dst_env }}
+      run: |
+        if [ -z "$DD_AUTH" ] || [ -z "$PRODUCT" ] || [ -z "$MICRO" ]; then
+          echo "carry-metrics: falta auth/product/micro, se omite (no rompe la promocion)."
+          exit 0
+        fi
+        python3 - <<'PY'
+        import os, re, sys, base64, urllib.request, collections
+
+        url = os.environ['URL'].rstrip('/')
+        auth = os.environ['DD_AUTH']
+        product, micro = os.environ['PRODUCT'], os.environ['MICRO']
+        src, dst = os.environ['SRC_ENV'], os.environ['DST_ENV']
+        hdr = {'Authorization': 'Basic ' + base64.b64encode(auth.encode()).decode()}
+
+        # Lee la exposición completa del Pushgateway.
+        try:
+            req = urllib.request.Request(url + '/metrics', headers=hdr)
+            text = urllib.request.urlopen(req, timeout=20).read().decode()
+        except Exception as e:
+            print(f"carry-metrics: no se pudo leer Pushgateway: {e}")
+            sys.exit(0)
+
+        # Labels que pone el Pushgateway desde la URL (grouping): no van en el body.
+        GROUPING = {'job', 'product', 'micro', 'env', 'check', 'instance'}
+        line_re = re.compile(r'^(cicd_[a-z_]+)\{([^}]*)\}\s+(\S+)')
+        label_re = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
+
+        bycheck = collections.defaultdict(list)
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            m = line_re.match(line)
+            if not m:
+                continue
+            name, labelstr, value = m.groups()
+            labels = dict(label_re.findall(labelstr))
+            if (labels.get('product') != product or labels.get('micro') != micro
+                    or labels.get('env') != src):
+                continue
+            check = labels.get('check')
+            if not check:
+                continue
+            kept = {k: v for k, v in labels.items() if k not in GROUPING}
+            ls = ('{' + ','.join(f'{k}="{v}"' for k, v in kept.items()) + '}') if kept else ''
+            bycheck[check].append(f'{name}{ls} {value}')
+
+        if not bycheck:
+            print(f"carry-metrics: nada que copiar de env={src} para {product}/{micro}")
+            sys.exit(0)
+
+        for check, lines in bycheck.items():
+            body = ('\n'.join(lines) + '\n').encode()
+            target = f'{url}/metrics/job/cicd/product/{product}/micro/{micro}/env/{dst}/check/{check}'
+            try:
+                req = urllib.request.Request(target, data=body, method='POST',
+                                             headers={**hdr, 'Content-Type': 'text/plain'})
+                r = urllib.request.urlopen(req, timeout=20)
+                print(f"carry-metrics: {check} {src}->{dst} OK ({r.status})")
+            except Exception as e:
+                print(f"::warning::carry-metrics: fallo {check} {src}->{dst}: {e}")
+        PY

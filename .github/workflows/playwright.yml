@@ -21,6 +21,25 @@ on:
         required: false
         type: string
         default: "."
+      product:
+        description: Producto (worldbinary...). Vacio = no se pushea métrica al dashboard.
+        required: false
+        type: string
+        default: ""
+      microservice:
+        description: Nombre del microservicio/front. Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+      env:
+        description: Entorno (dev, qa...). Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
+        required: false
 
 jobs:
   e2e:
@@ -53,10 +72,13 @@ jobs:
         if: steps.detect.outputs.found == 'true'
         run: npx playwright install --with-deps
       - name: Run Playwright
+        id: run
         if: steps.detect.outputs.found == 'true'
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
-        run: npx playwright test
+          PLAYWRIGHT_JSON_OUTPUT_NAME: pw-results.json
+        # reporter json (ademas de line) para extraer conteos al dashboard.
+        run: npx playwright test --reporter=line,json
       - name: Upload report
         if: ${{ always() && steps.detect.outputs.found == 'true' }}
         uses: actions/upload-artifact@v4
@@ -64,3 +86,38 @@ jobs:
           name: playwright-report
           path: ${{ inputs.working_directory }}/playwright-report
           if-no-files-found: ignore
+
+      - name: Playwright summary
+        id: sum
+        if: ${{ always() && steps.detect.outputs.found == 'true' }}
+        shell: bash
+        run: |
+          passed=0; failed=0
+          if [ -f pw-results.json ]; then
+            passed=$(jq -r '.stats.expected // 0' pw-results.json 2>/dev/null || echo 0)
+            failed=$(jq -r '(.stats.unexpected // 0) + (.stats.flaky // 0)' pw-results.json 2>/dev/null || echo 0)
+          fi
+          if [ "${{ steps.run.outcome }}" = "failure" ] || [ "${failed:-0}" -gt 0 ]; then status=0; else status=1; fi
+          echo "Playwright: passed=$passed failed=$failed"
+          {
+            echo "status=$status"
+            echo "extra<<EOF"
+            echo "cicd_tests{outcome=\"passed\"} ${passed:-0}"
+            echo "cicd_tests{outcome=\"failed\"} ${failed:-0}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push playwright metrics
+        if: ${{ always() && steps.detect.outputs.found == 'true' && inputs.microservice != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: playwright
+          status: ${{ steps.sum.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: ${{ steps.sum.outputs.extra }}

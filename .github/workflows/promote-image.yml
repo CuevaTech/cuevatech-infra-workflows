@@ -54,6 +54,10 @@ on:
       dst_tag:
         description: Tag de destino aplicado.
         value: ${{ jobs.promote.outputs.dst_tag }}
+    secrets:
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional, para carry-forward de métricas).
+        required: false
 
 jobs:
   promote:
@@ -322,3 +326,16 @@ jobs:
             echo "dst_tag=$dst_tag"
             echo "image_uri=$image_uri"
           } >> "$GITHUB_OUTPUT"
+
+      # Carry-forward: la imagen promovida es el MISMO artefacto, asi que las
+      # pruebas de codigo/imagen (Trivy/CodeQL/SCA/lint/unit) de src_env aplican
+      # igual a dst_env. Se copian al dashboard sin re-correr. Las pruebas
+      # propias del destino (E2E en qa, smoke en prod) las corre su pipeline.
+      - name: Carry-forward métricas src_env -> dst_env
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/carry-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          src_env: ${{ inputs.src_env }}
+          dst_env: ${{ inputs.dst_env }}

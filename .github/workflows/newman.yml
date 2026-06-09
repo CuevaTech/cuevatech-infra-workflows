@@ -29,9 +29,27 @@ on:
         required: false
         type: string
         default: "20"
+      product:
+        description: Producto (worldbinary...). Vacio = no se pushea métrica al dashboard.
+        required: false
+        type: string
+        default: ""
+      microservice:
+        description: Nombre del microservicio. Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
+      env:
+        description: Entorno (dev, qa...). Vacio = no se pushea métrica.
+        required: false
+        type: string
+        default: ""
     secrets:
       API_KEY:
         description: API key inyectada como var api_key en la coleccion (opcional).
+        required: false
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
         required: false
 
 jobs:
@@ -45,6 +63,7 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
       - name: Run newman
+        id: run
         shell: bash
         env:
           COLLECTION: ${{ inputs.collection }}
@@ -76,3 +95,41 @@ jobs:
           name: newman-report
           path: newman-report.json
           if-no-files-found: ignore
+
+      # Resume aserciones del reporte para el dashboard.
+      - name: Newman summary
+        id: sum
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          total=0; failed=0
+          if [ -f newman-report.json ]; then
+            total=$(jq -r '.run.stats.assertions.total // 0' newman-report.json 2>/dev/null || echo 0)
+            failed=$(jq -r '.run.stats.assertions.failed // 0' newman-report.json 2>/dev/null || echo 0)
+          fi
+          passed=$((total - failed))
+          [ "$passed" -lt 0 ] && passed=0
+          if [ "${{ steps.run.outcome }}" = "failure" ] || [ "$failed" -gt 0 ]; then status=0; else status=1; fi
+          echo "Newman: passed=$passed failed=$failed (total=$total)"
+          {
+            echo "status=$status"
+            echo "extra<<EOF"
+            echo "cicd_tests{outcome=\"passed\"} $passed"
+            echo "cicd_tests{outcome=\"failed\"} $failed"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push newman metrics
+        if: ${{ always() && inputs.microservice != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: newman
+          status: ${{ steps.sum.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: ${{ steps.sum.outputs.extra }}

@@ -2,8 +2,8 @@ name: CodeQL
 
 # SAST con CodeQL. Genera el SARIF localmente (upload:false) y NO lo sube a
 # GitHub code scanning — eso requiere GitHub Advanced Security en repos
-# privados. En su lugar el SARIF va a DefectDojo (panel unificado, mismo flujo
-# que el reporte Trivy de build-image).
+# privados. En su lugar se cuenta por severidad y el estado va al Pushgateway
+# central (dashboard semaforo, mismo flujo que el reporte Trivy de build-image).
 # Gate: bloquea el run si hay findings de severidad CRITICAL
 # (security-severity >= 9.0 en el SARIF de CodeQL).
 on:
@@ -18,13 +18,17 @@ on:
         required: true
         type: string
       env:
-        description: Entorno (dev, qa, staging, prod) — contexto DefectDojo.
+        description: Entorno (dev, qa, staging, prod) — contexto del dashboard.
         required: true
         type: string
       microservice:
-        description: Nombre del microservicio — contexto DefectDojo.
+        description: Nombre del microservicio — contexto del dashboard.
         required: true
         type: string
+    secrets:
+      PUSHGW_AUTH:
+        description: Credenciales basicAuth "usuario:clave" del Pushgateway central (opcional).
+        required: false
 
 jobs:
   analyze:
@@ -67,66 +71,61 @@ jobs:
           if [ -z "$f" ]; then echo "::error::no se genero SARIF"; exit 1; fi
           echo "file=$f" >> "$GITHUB_OUTPUT"
 
-      # Sube a DefectDojo. No bloquea: si falta URL/token o no responde, sigue.
-      # El corte real lo hace el gate de mas abajo.
-      - name: Upload SARIF a DefectDojo
-        if: ${{ always() && vars.DEFECTDOJO_URL != '' && steps.sarif.outputs.file != '' }}
-        continue-on-error: true
-        env:
-          DD_URL: ${{ vars.DEFECTDOJO_URL }}
-          DD_TOKEN: ${{ secrets.DEFECTDOJO_TOKEN }}
-          PRODUCT: ${{ inputs.product }}
-          MS: ${{ inputs.microservice }}
-          ENVIRON: ${{ inputs.env }}
-          SARIF: ${{ steps.sarif.outputs.file }}
-          COMMIT: ${{ github.sha }}
-          BRANCH: ${{ github.ref_name }}
-          RUN_ID: ${{ github.run_id }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-        run: |
-          if [ -z "$DD_TOKEN" ]; then
-            echo "DEFECTDOJO_TOKEN vacio, salto upload"; exit 0
-          fi
-          http=$(curl -sS -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
-            -H "Authorization: Token $DD_TOKEN" \
-            -F "scan_type=SARIF" \
-            -F "file=@${SARIF}" \
-            -F "auto_create_context=true" \
-            -F "product_type_name=${PRODUCT}" \
-            -F "product_name=${PRODUCT}-${MS}" \
-            -F "engagement_name=${ENVIRON}" \
-            -F "commit_hash=${COMMIT}" \
-            -F "branch_tag=${BRANCH}" \
-            -F "build_id=${RUN_ID}" \
-            -F "source_code_management_uri=${REPO_URL}" \
-            -F "active=true" -F "verified=false" \
-            -F "minimum_severity=Info" \
-            -o /tmp/dd-resp.json -w "%{http_code}")
-          echo "DefectDojo upload HTTP $http"
-          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
-            echo "::error::DefectDojo upload fallo (HTTP $http)"
-            cat /tmp/dd-resp.json || true
-            exit 1
-          fi
-
-      # Gate: security-severity es escala CVSS; CodeQL marca CRITICAL >= 9.0.
-      - name: Gate CRITICAL
+      # Cuenta findings por severidad (security-severity = escala CVSS) y decide
+      # el gate (CRITICAL >= 9.0). La decision sale del SARIF ya generado.
+      - name: CodeQL summary + gate decision
+        id: codeql
         shell: bash
+        if: ${{ always() && steps.sarif.outputs.file != '' }}
         env:
           SARIF: ${{ steps.sarif.outputs.file }}
         run: |
-          crit=$(jq '
+          # Devuelve la lista de security-severity numericas de todos los findings.
+          scores=$(jq -r '
             [ .runs[]
               | ( (.tool.driver.rules // []) + ([ .tool.extensions[]?.rules[]? ]) ) as $rules
               | .results[]?
               | (.ruleId // .rule.id) as $rid
               | ( $rules[] | select(.id == $rid) | .properties."security-severity"? )
               | select(. != null) | tonumber
-              | select(. >= 9.0)
-            ] | length
-          ' "$SARIF")
-          echo "Findings CRITICAL: ${crit:-0}"
-          if [ "${crit:-0}" -gt 0 ]; then
-            echo "::error::CodeQL encontro ${crit} finding(s) CRITICAL (security-severity >= 9.0)"
-            exit 1
-          fi
+            ] | .[]' "$SARIF" 2>/dev/null || true)
+          crit=0; high=0; med=0; low=0
+          for s in $scores; do
+            awk "BEGIN{exit !($s>=9.0)}"        && { crit=$((crit+1)); continue; }
+            awk "BEGIN{exit !($s>=7.0 && $s<9.0)}" && { high=$((high+1)); continue; }
+            awk "BEGIN{exit !($s>=4.0 && $s<7.0)}" && { med=$((med+1)); continue; }
+            low=$((low+1))
+          done
+          echo "CodeQL: CRITICAL=$crit HIGH=$high MEDIUM=$med LOW=$low"
+          if [ "$crit" -gt 0 ]; then status=0; gatefail=1; else status=1; gatefail=0; fi
+          {
+            echo "status=$status"
+            echo "gatefail=$gatefail"
+            echo "extra<<EOF"
+            echo "cicd_vulnerabilities{severity=\"CRITICAL\"} $crit"
+            echo "cicd_vulnerabilities{severity=\"HIGH\"} $high"
+            echo "cicd_vulnerabilities{severity=\"MEDIUM\"} $med"
+            echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push CodeQL metrics
+        if: ${{ always() && steps.codeql.outputs.status != '' }}
+        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        with:
+          auth: ${{ secrets.PUSHGW_AUTH }}
+          product: ${{ inputs.product }}
+          micro: ${{ inputs.microservice }}
+          env: ${{ inputs.env }}
+          check: codeql
+          status: ${{ steps.codeql.outputs.status }}
+          branch: ${{ github.ref_name }}
+          build_id: ${{ github.run_id }}
+          commit: ${{ github.sha }}
+          extra: ${{ steps.codeql.outputs.extra }}
+
+      - name: Gate CRITICAL
+        if: ${{ always() && steps.codeql.outputs.gatefail == '1' }}
+        run: |
+          echo "::error::CodeQL encontro finding(s) CRITICAL (security-severity >= 9.0)"
+          exit 1
