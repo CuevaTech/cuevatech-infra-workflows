@@ -11,9 +11,9 @@ inputs:
     required: false
     default: ''
   url:
-    description: URL base del Pushgateway.
+    description: URL base del Pushgateway (host reportes-ci-cd, path /metrics).
     required: false
-    default: https://cicd-metrics.worldbinary.pro
+    default: https://reportes-ci-cd.worldbinary.pro
   product:
     description: Producto (worldbinary, worldbinarytv...). Si vacío, se omite el push.
     required: false
