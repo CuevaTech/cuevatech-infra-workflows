@@ -157,6 +157,7 @@ jobs:
           branch: ${{ github.ref_name }}
           build_id: ${{ github.run_id }}
           commit: ${{ github.sha }}
+          report: ${{ steps.collect.outputs.tsc_error }}${{ steps.collect.outputs.lint_error }}
 
   test:
     runs-on: ubuntu-latest
@@ -206,3 +207,4 @@ jobs:
           build_id: ${{ github.run_id }}
           commit: ${{ github.sha }}
           extra: cicd_tests{outcome="failed"} ${{ steps.collect.outputs.failed_count }}
+          report: ${{ steps.collect.outputs.failed_tests }}

@@ -171,6 +171,10 @@ jobs:
             echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
             echo "cicd_vulnerabilities{severity=\"UNKNOWN\"} $unk"
             echo "EOF"
+            # Reporte literal: top 20 CRITICAL/HIGH (CVE, paquete, fix) para Grafana.
+            echo "report<<EOF"
+            jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | .[:20][] | "\(.Severity) \(.VulnerabilityID) \(.PkgName)@\(.InstalledVersion) -> \(.FixedVersion // "sin-fix")"' "$R" 2>/dev/null | head -20
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       # Pushea el estado de Trivy al Pushgateway central (dashboard semaforo).
@@ -189,6 +193,7 @@ jobs:
           commit: ${{ github.sha }}
           version: ${{ steps.meta.outputs.tag }}
           extra: ${{ steps.trivy.outputs.extra }}
+          report: ${{ steps.trivy.outputs.report }}
 
       # Gate: bloquea (exit 1) ante CRITICAL con fix disponible. La decision ya
       # se calculo arriba; aqui solo se corta para no publicar la imagen.

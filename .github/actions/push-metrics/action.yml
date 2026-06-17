@@ -55,6 +55,14 @@ inputs:
       'cicd_vulnerabilities{severity="CRITICAL"} 2'.
     required: false
     default: ''
+  report:
+    description: >-
+      Reporte/salida literal del paso (error de tsc/lint, resumen de Trivy, tests
+      fallidos, etc.). Se sanea (escape + truncado a 800 chars) y se pushea como
+      label de la métrica cicd_check_report para consultarlo en Grafana. Vacío = no
+      se pushea reporte. NO usar para Sonar (Sonar no reporta al Pushgateway).
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -73,6 +81,7 @@ runs:
         COMMIT: ${{ inputs.commit }}
         VERSION: ${{ inputs.version }}
         EXTRA: ${{ inputs.extra }}
+        REPORT: ${{ inputs.report }}
       run: |
         if [ -z "$DD_AUTH" ] || [ -z "$PRODUCT" ] || [ -z "$MICRO" ] || [ -z "$ENVIRON" ]; then
           echo "push-metrics: falta auth/product/micro/env, se omite el push (no rompe el build)."
@@ -87,6 +96,16 @@ runs:
         if [ -n "$EXTRA" ]; then
           body="${body}
         ${EXTRA}"
+        fi
+        # Reporte/error literal del paso -> label de cicd_check_report. Se sanea
+        # (tabs/saltos a espacio, escape de \ y ", truncado a 800 chars) para que
+        # sea un label válido del formato de exposición Prometheus. El Pushgateway
+        # reemplaza el grupo, así que solo queda el último reporte por check (sin
+        # explosión de cardinalidad). Grafana lo muestra como tabla (panel: luego).
+        if [ -n "$REPORT" ]; then
+          rep="$(printf '%s' "$REPORT" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-800)"
+          body="${body}
+        cicd_check_report{report=\"${rep}\"} ${STATUS}"
         fi
         # Normalizar indentación accidental del heredoc y garantizar newline final.
         body="$(printf '%s\n' "$body" | sed 's/^[[:space:]]*//')"

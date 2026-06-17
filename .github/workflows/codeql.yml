@@ -107,6 +107,9 @@ jobs:
             echo "cicd_vulnerabilities{severity=\"MEDIUM\"} $med"
             echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
             echo "EOF"
+            echo "report<<EOF"
+            jq -r '[.runs[].results[]? | "\(.ruleId // .rule.id // "?"): \(.message.text // "")"] | .[:20][]' "$SARIF" 2>/dev/null | head -20
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Push CodeQL metrics
@@ -123,6 +126,7 @@ jobs:
           build_id: ${{ github.run_id }}
           commit: ${{ github.sha }}
           extra: ${{ steps.codeql.outputs.extra }}
+          report: ${{ steps.codeql.outputs.report }}
 
       - name: Gate CRITICAL
         if: ${{ always() && steps.codeql.outputs.gatefail == '1' }}
