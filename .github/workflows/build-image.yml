@@ -160,6 +160,24 @@ jobs:
           crit=$(sev CRITICAL); high=$(sev HIGH); med=$(sev MEDIUM); low=$(sev LOW); unk=$(sev UNKNOWN)
           critfix=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" and ((.FixedVersion // "") != ""))] | length' "$R" 2>/dev/null || echo 0)
           echo "Trivy: CRITICAL=$crit (fixable=$critfix) HIGH=$high MEDIUM=$med LOW=$low UNKNOWN=$unk"
+
+          # Detalle EN EL LOG del run: tabla de vulnerabilidades CRITICAL/HIGH con
+          # fix disponible (severidad, CVE, paquete, version instalada, fix). Asi el
+          # error se ve directo en el step, no solo el mensaje generico del gate.
+          echo "::group::Trivy — CRITICAL/HIGH con fix disponible (lo que bloquea el gate)"
+          {
+            printf 'SEVERIDAD\tCVE\tPAQUETE\tINSTALADA\tFIX\n'
+            jq -r '.Results[]?.Vulnerabilities[]?
+              | select((.Severity=="CRITICAL" or .Severity=="HIGH") and ((.FixedVersion // "") != ""))
+              | [.Severity, .VulnerabilityID, .PkgName, .InstalledVersion, .FixedVersion] | @tsv' "$R" 2>/dev/null | sort -u
+          } | column -t -s "$(printf '\t')"
+          echo "::endgroup::"
+          # Tambien deja el reporte completo (todas las severidades) como artefacto-en-log.
+          echo "::group::Trivy — reporte completo (todas las severidades con fix)"
+          jq -r '.Results[]?.Vulnerabilities[]?
+            | select((.FixedVersion // "") != "")
+            | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName) \(.InstalledVersion) -> \(.FixedVersion)"' "$R" 2>/dev/null | sort -u | head -100
+          echo "::endgroup::"
           if [ "${critfix:-0}" -gt 0 ]; then status=0; gatefail=1; else status=1; gatefail=0; fi
           {
             echo "status=$status"
