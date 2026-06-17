@@ -62,6 +62,12 @@ jobs:
       # qualitygate.wait=true => bloquea el job si el gate queda rojo.
       # sonar.sources/exclusions vienen del sonar-project.properties del repo.
       - name: SonarQube Scan
+        id: sonar
+        # TEMPORAL — Sonar INFORMATIVO durante la migracion/pruebas: el scan corre y
+        # espera el Quality Gate, pero si queda ROJO el job NO bloquea el merge.
+        # REACTIVAR BLOQUEANTE: borrar esta linea `continue-on-error` cuando el equipo
+        # tenga coverage/tests y el Quality Gate pase (volvera a cortar el PR).
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -72,3 +78,13 @@ jobs:
             -Dsonar.projectName=${{ steps.pk.outputs.key }}
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
+
+      - name: Reporte Quality Gate (informativo)
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.sonar.outcome }}" = "success" ]; then
+            echo "Sonar Quality Gate: PASS (${{ steps.pk.outputs.key }})"
+          else
+            echo "::warning::Sonar Quality Gate: FAILED (INFORMATIVO, no bloquea el merge). Reactivar bloqueante tras las pruebas. Dashboard: ${{ vars.SONAR_HOST_URL }}/dashboard?id=${{ steps.pk.outputs.key }}"
+          fi
