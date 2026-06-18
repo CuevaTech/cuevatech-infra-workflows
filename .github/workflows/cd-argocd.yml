@@ -2,7 +2,11 @@ name: CD ArgoCD
 
 # Deploy GitOps a Kubernetes: parcha el tag de la imagen en el repo de manifests
 # y pushea. ArgoCD reconcilia (pull). No usa credenciales AWS — solo necesita
-# escribir en el repo de manifests (secret MANIFESTS_GH_TOKEN).
+# escribir en el repo de manifests. Autentica como GitHub App (token de
+# installation efimero, ~1h) en vez de un PAT personal: permiso minimo
+# (contents:write solo sobre el repo de manifests), identidad propia <app>[bot]
+# y sin depender de la cuenta de una persona. App ID y private key vienen de
+# org secrets (se pasan a los callers via `secrets: inherit`).
 on:
   workflow_call:
     inputs:
@@ -33,19 +37,34 @@ on:
         type: string
         default: WorldBinary/worldbinary-infra-kubernetes-manifests
     secrets:
-      MANIFESTS_GH_TOKEN:
-        description: PAT con contents:write sobre el repo de manifests.
+      MANIFESTS_APP_ID:
+        description: App ID de la GitHub App con contents:write sobre el repo de manifests.
+        required: true
+      MANIFESTS_APP_PRIVATE_KEY:
+        description: Private key (PEM) de la GitHub App.
         required: true
 
 jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
+      - name: Generate manifests App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.MANIFESTS_APP_ID }}
+          private-key: ${{ secrets.MANIFESTS_APP_PRIVATE_KEY }}
+          # owner = la org del caller (misma org que el repo de manifests).
+          # repositories = nombre del repo de manifests (sin owner); la App esta
+          # instalada solo ahi, asi el token queda scoped a ese unico repo.
+          owner: ${{ github.repository_owner }}
+          repositories: worldbinary-infra-kubernetes-manifests
+
       - name: Checkout manifests repo
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.manifests_repo }}
-          token: ${{ secrets.MANIFESTS_GH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: manifests
 
       - name: Patch image + push
@@ -84,8 +103,10 @@ jobs:
             exit 1
           fi
 
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@worldbinary.io"
+          # Identidad del commit = la GitHub App (la identidad real del push es
+          # el token de installation que generamos arriba).
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git add "$file"
           if git diff --cached --quiet; then
             echo "Sin cambios: la imagen ya estaba en $IMAGE_URI"
