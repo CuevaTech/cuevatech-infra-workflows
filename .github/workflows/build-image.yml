@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - id: resolve
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main
         with:
           product: ${{ inputs.product }}
           env: ${{ inputs.env }}
@@ -198,7 +198,7 @@ jobs:
       # Pushea el estado de Trivy al Pushgateway central (dashboard semaforo).
       - name: Push Trivy metrics
         if: ${{ always() && steps.trivy.outputs.status != '' }}
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
           product: ${{ inputs.product }}

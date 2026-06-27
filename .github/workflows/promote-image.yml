@@ -73,13 +73,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - id: src
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main
         with:
           product: ${{ inputs.product }}
           env: ${{ inputs.src_env }}
 
       - id: dst
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main
         with:
           product: ${{ inputs.product }}
           env: ${{ inputs.dst_env }}
@@ -332,7 +332,7 @@ jobs:
       # igual a dst_env. Se copian al dashboard sin re-correr. Las pruebas
       # propias del destino (E2E en qa, smoke en prod) las corre su pipeline.
       - name: Carry-forward métricas src_env -> dst_env
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/carry-metrics@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/carry-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
           product: ${{ inputs.product }}

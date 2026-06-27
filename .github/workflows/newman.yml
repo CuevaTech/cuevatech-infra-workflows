@@ -121,7 +121,7 @@ jobs:
 
       - name: Push newman metrics
         if: ${{ always() && inputs.microservice != '' }}
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
           product: ${{ inputs.product }}

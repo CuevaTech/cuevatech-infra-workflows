@@ -32,7 +32,7 @@ jobs:
       contents: read
     steps:
       - id: resolve
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/resolve@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main
         with:
           product: ${{ inputs.product }}
           env: ${{ inputs.env }}

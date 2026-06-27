@@ -127,18 +127,18 @@ permissions:
 
 jobs:
   ci:
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/ci.yml@main
     with: { lang: node }
 
   build:
     needs: ci
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/build-image.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/build-image.yml@main
     with: { product: worldbinary, env: dev, microservice: ms-template }
     secrets: inherit                 # pasa DEFECTDOJO_TOKEN
 
   deploy:
     needs: build
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/cd.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/cd.yml@main
     with:
       product: worldbinary
       env: dev
@@ -158,7 +158,7 @@ on:
   pull_request: { branches: [develop] }
 jobs:
   ci:
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/ci.yml@main
     with: { lang: node }
 ```
 

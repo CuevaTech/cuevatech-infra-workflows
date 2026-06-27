@@ -114,7 +114,7 @@ jobs:
 
       - name: Push CodeQL metrics
         if: ${{ always() && steps.codeql.outputs.status != '' }}
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
           product: ${{ inputs.product }}

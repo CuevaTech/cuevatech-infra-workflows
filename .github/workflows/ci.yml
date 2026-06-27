@@ -20,8 +20,8 @@ on:
 jobs:
   node:
     if: ${{ inputs.lang == 'node' }}
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci-node.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/ci-node.yml@main
 
   python:
     if: ${{ inputs.lang == 'python' }}
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/ci-python.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/ci-python.yml@main

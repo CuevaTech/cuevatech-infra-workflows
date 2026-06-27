@@ -54,7 +54,7 @@ on:
 jobs:
   kubernetes:
     if: ${{ inputs.type == 'kubernetes' }}
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/cd-argocd.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/cd-argocd.yml@main
     with:
       product: ${{ inputs.product }}
       env: ${{ inputs.env }}
@@ -66,7 +66,7 @@ jobs:
 
   lambda:
     if: ${{ inputs.type == 'lambda' }}
-    uses: WorldBinary/worldbinary-infra-workflows/.github/workflows/cd-lambda.yml@main
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/cd-lambda.yml@main
     with:
       product: ${{ inputs.product }}
       env: ${{ inputs.env }}

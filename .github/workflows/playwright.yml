@@ -109,7 +109,7 @@ jobs:
 
       - name: Push playwright metrics
         if: ${{ always() && steps.detect.outputs.found == 'true' && inputs.microservice != '' }}
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
           product: ${{ inputs.product }}

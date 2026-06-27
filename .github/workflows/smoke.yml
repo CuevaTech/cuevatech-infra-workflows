@@ -100,7 +100,7 @@ jobs:
 
       - name: Push smoke metrics
         if: ${{ always() && inputs.microservice != '' && steps.smoke.outputs.status != '' }}
-        uses: WorldBinary/worldbinary-infra-workflows/.github/actions/push-metrics@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
           product: ${{ inputs.product }}
