@@ -35,7 +35,7 @@ on:
         description: Repo de manifests que ArgoCD reconcilia.
         required: false
         type: string
-        default: WorldBinary/worldbinary-infra-kubernetes-manifests
+        default: CuevaTech/cuevatech-infra-kubernetes-manifests
     secrets:
       MANIFESTS_APP_ID:
         description: App ID de la GitHub App con contents:write sobre el repo de manifests.
