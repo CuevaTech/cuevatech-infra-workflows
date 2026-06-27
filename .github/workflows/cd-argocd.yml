@@ -58,7 +58,7 @@ jobs:
           # repositories = nombre del repo de manifests (sin owner); la App esta
           # instalada solo ahi, asi el token queda scoped a ese unico repo.
           owner: ${{ github.repository_owner }}
-          repositories: worldbinary-infra-kubernetes-manifests
+          repositories: cuevatech-infra-kubernetes-manifests
 
       - name: Checkout manifests repo
         uses: actions/checkout@v4

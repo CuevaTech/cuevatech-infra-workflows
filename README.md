@@ -173,7 +173,7 @@ jobs:
 | `DEFECTDOJO_URL` | variable | `https://reportes-ci-cd.worldbinary.pro`. Si está vacía, el upload se salta. |
 
 OIDC: cada cuenta tiene el provider GitHub + role `github-actions-deployer`
-(trust por prefijo de repo `repo:WorldBinary/<product>-*`).
+(trust por prefijo de repo `repo:<org>/<product>-*`, ej. `repo:CuevaTech/cuevatech-infra-*`).
 
 ---
 
