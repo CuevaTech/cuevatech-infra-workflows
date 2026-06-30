@@ -68,9 +68,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-          cache: npm
       - name: Install
-        run: npm ci
+        run: |
+          # Tolerante: npm ci si hay lock; si no (repos aun no migrados, JS plano),
+          # npm install. Evita que setup-node/npm ci rompan por falta de package-lock.
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
       - name: Typecheck
         id: tsc
         if: hashFiles('tsconfig.json') != ''
@@ -169,9 +175,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-          cache: npm
       - name: Install
-        run: npm ci
+        run: |
+          # Tolerante: npm ci si hay lock; si no (repos aun no migrados, JS plano),
+          # npm install. Evita que setup-node/npm ci rompan por falta de package-lock.
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
       - name: Test
         id: run
         continue-on-error: ${{ inputs.tests_required == false }}
