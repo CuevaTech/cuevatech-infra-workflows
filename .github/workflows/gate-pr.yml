@@ -91,3 +91,19 @@ jobs:
           else
             echo "::warning::no se pudo grabar el commit status (el caller necesita permissions statuses: write)"
           fi
+
+  # Valida (INFORMATIVO) que el micro backend tenga un graceful-shutdown y que NO este
+  # vacio. NO valida que el codigo funcione (eso es de los devs). Fronts: no aplica.
+  graceful:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar graceful-shutdown (solo micros backend)
+        run: |
+          if grep -qE '"(vite|react|react-dom|next|vue|@angular/core|svelte)"[[:space:]]*:' package.json 2>/dev/null; then
+            echo "frontend -> graceful-shutdown no aplica"; exit 0
+          fi
+          f=$(ls src/graceful-shutdown.ts src/graceful-shutdown.js graceful-shutdown.ts graceful-shutdown.js src/gracefulShutdown.ts 2>/dev/null | head -1)
+          if [ -z "$f" ]; then echo "::warning::FALTA graceful-shutdown (micro sin archivo)"; exit 0; fi
+          if [ ! -s "$f" ]; then echo "::warning::graceful-shutdown VACIO ($f)"; exit 0; fi
+          echo "graceful-shutdown OK: $f ($(wc -l < "$f") lineas)"
