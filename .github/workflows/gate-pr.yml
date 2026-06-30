@@ -49,11 +49,23 @@ jobs:
       env: ${{ inputs.env }}
     secrets: inherit
 
+  ci-php:
+    if: ${{ inputs.lang == 'php' }}
+    uses: ./.github/workflows/ci-php.yml
+    with:
+      tests_required: false
+      checks_required: false
+      product: ${{ inputs.product }}
+      microservice: ${{ inputs.microservice }}
+      env: ${{ inputs.env }}
+    secrets: inherit
+
   sonar:
     uses: ./.github/workflows/sonar-scan.yml
     secrets: inherit
 
   codeql:
+    if: ${{ inputs.lang != 'php' }}   # CodeQL no soporta PHP; en php el scan de codigo lo cubre Trivy fs (SCA) del ci-php
     uses: ./.github/workflows/codeql.yml
     with:
       lang: ${{ inputs.lang }}
@@ -103,6 +115,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validar graceful-shutdown (solo micros backend)
         run: |
+          if [ -f composer.json ]; then echo "PHP/Laravel -> graceful-shutdown no aplica"; exit 0; fi
           if grep -qE '"(vite|react|react-dom|next|vue|@angular/core|svelte)"[[:space:]]*:' package.json 2>/dev/null; then
             echo "frontend -> graceful-shutdown no aplica"; exit 0
           fi
