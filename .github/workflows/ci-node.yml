@@ -202,6 +202,14 @@ jobs:
           micro: ${{ inputs.microservice }}
           env: ${{ inputs.env }}
           check: unit
+
+  # Gate Sonar CENTRALIZADO en el padre: corre en cada pull_request. El caller (hijo)
+  # solo invoca ci-node -> no puede saltarse el gate borrando algo de su repo y decir
+  # "no estaba". Requiere SONAR_TOKEN via `secrets: inherit` desde el hijo.
+  sonar:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: CuevaTech/cuevatech-infra-workflows/.github/workflows/sonar-scan.yml@main
+    secrets: inherit
           status: ${{ steps.run.outcome != 'failure' && '1' || '0' }}
           branch: ${{ github.ref_name }}
           build_id: ${{ github.run_id }}
