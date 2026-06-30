@@ -85,6 +85,9 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
         run: |
-          gh api -X POST "repos/${REPO}/statuses/${SHA}" \
-            -f state=success -f context=deploy/image -f description="$IMG" >/dev/null
-          echo "status deploy/image=$IMG en $SHA"
+          if gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+               -f state=success -f context=deploy/image -f description="$IMG" >/dev/null 2>&1; then
+            echo "status deploy/image=$IMG en $SHA"
+          else
+            echo "::warning::no se pudo grabar el commit status (el caller necesita permissions statuses: write)"
+          fi
