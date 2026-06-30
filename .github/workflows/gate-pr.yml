@@ -1,0 +1,72 @@
+name: PR Gate
+
+# Gate de PR CENTRALIZADO en el padre. El repo hijo solo invoca este reusable;
+# no puede saltarse sonar/trivy borrando algo de su repo. Corre en cada pull_request:
+#   - ci      : typecheck + lint + test + Trivy fs (dependencias)   -> Grafana
+#   - sonar   : SonarQube quality gate
+#   - codeql  : analisis de seguridad del codigo
+#   - build   : build Docker + push ECR (genera la imagen) + Trivy de imagen -> Grafana
+# Toda la metrica va a Grafana (Pushgateway). El image_uri se expone para el CD.
+on:
+  workflow_call:
+    inputs:
+      lang:
+        description: Lenguaje del proyecto (node | python).
+        required: true
+        type: string
+      product:
+        description: Producto (worldbinary, impulse, cuevatech).
+        required: true
+        type: string
+      microservice:
+        description: Nombre del microservicio.
+        required: true
+        type: string
+      env:
+        description: Entorno destino (dev por defecto en el gate del PR).
+        required: false
+        type: string
+        default: dev
+      node_version:
+        required: false
+        type: string
+        default: "24"
+    outputs:
+      image_uri:
+        description: URI de la imagen construida en el PR (para el CD).
+        value: ${{ jobs.build.outputs.image_uri }}
+
+jobs:
+  ci:
+    if: ${{ inputs.lang == 'node' }}
+    uses: ./.github/workflows/ci-node.yml
+    with:
+      node_version: ${{ inputs.node_version }}
+      tests_required: false
+      checks_required: false
+      product: ${{ inputs.product }}
+      microservice: ${{ inputs.microservice }}
+      env: ${{ inputs.env }}
+    secrets: inherit
+
+  sonar:
+    uses: ./.github/workflows/sonar-scan.yml
+    secrets: inherit
+
+  codeql:
+    uses: ./.github/workflows/codeql.yml
+    with:
+      lang: ${{ inputs.lang }}
+      product: ${{ inputs.product }}
+      env: ${{ inputs.env }}
+      microservice: ${{ inputs.microservice }}
+    secrets: inherit
+
+  build:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      product: ${{ inputs.product }}
+      env: ${{ inputs.env }}
+      microservice: ${{ inputs.microservice }}
+      push: true
+    secrets: inherit
