@@ -76,6 +76,9 @@ jobs:
   # esa imagen EXACTA (sin "latest" en ECR, que es fragil con commits de mismo digest).
   record-image:
     needs: build
+    # Corre SIEMPRE (no se salta cuando build falla) -> no deja nodo gris "fantasma"
+    # en el grafo del gate. Es tolerante: si no hay imagen (build fallo) solo avisa.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Grabar image_uri en commit status del PR
