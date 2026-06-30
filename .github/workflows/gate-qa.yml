@@ -1,0 +1,78 @@
+name: QA Gate
+
+# Gate del PR develop -> qa. CENTRALIZADO en el padre; el hijo solo invoca.
+# Detecta si el repo es FRONTEND o BACKEND y corre la prueba que corresponde:
+#   - frontend -> Playwright (e2e)
+#   - backend  -> Newman (API/Postman)
+# Por ahora INFORMATIVO: si no hay pruebas configuradas (sin collection / sin specs)
+# el job se SKIPea -> el gate pasa normal. Cuando haya pruebas, se ejecutan.
+on:
+  workflow_call:
+    inputs:
+      product:
+        required: true
+        type: string
+      microservice:
+        required: true
+        type: string
+      env:
+        required: false
+        type: string
+        default: qa
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      type: ${{ steps.d.outputs.type }}
+      has_tests: ${{ steps.d.outputs.has_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: d
+        run: |
+          set -euo pipefail
+          type=backend
+          if [ -f package.json ] && grep -qE '"(vite|react|react-dom|next|vue|@angular/core|svelte)"[[:space:]]*:' package.json; then
+            type=frontend
+          fi
+          has_tests=false
+          if [ "$type" = "frontend" ]; then
+            ls playwright.config.* >/dev/null 2>&1 && has_tests=true
+            ls tests/**/*.spec.* >/dev/null 2>&1 && has_tests=true || true
+          else
+            [ -f tests/postman/collection.json ] && has_tests=true
+          fi
+          echo "type=$type" >> "$GITHUB_OUTPUT"
+          echo "has_tests=$has_tests" >> "$GITHUB_OUTPUT"
+          echo "Detectado: type=$type has_tests=$has_tests"
+
+  playwright:
+    needs: detect
+    if: ${{ needs.detect.outputs.type == 'frontend' && needs.detect.outputs.has_tests == 'true' }}
+    uses: ./.github/workflows/playwright.yml
+    with:
+      product: ${{ inputs.product }}
+      microservice: ${{ inputs.microservice }}
+      env: ${{ inputs.env }}
+    secrets: inherit
+
+  newman:
+    needs: detect
+    if: ${{ needs.detect.outputs.type == 'backend' && needs.detect.outputs.has_tests == 'true' }}
+    uses: ./.github/workflows/newman.yml
+    with:
+      product: ${{ inputs.product }}
+      microservice: ${{ inputs.microservice }}
+      env: ${{ inputs.env }}
+    secrets: inherit
+
+  notify:
+    needs: [detect, playwright, newman]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resumen
+        run: |
+          echo "type=${{ needs.detect.outputs.type }} has_tests=${{ needs.detect.outputs.has_tests }}"
+          echo "playwright=${{ needs.playwright.result }} newman=${{ needs.newman.result }}"
+          echo "Sin pruebas configuradas -> jobs skipped, gate pasa (informativo por ahora)."
