@@ -70,3 +70,21 @@ jobs:
       microservice: ${{ inputs.microservice }}
       push: true
     secrets: inherit
+
+  # Handoff determinista PR -> CD: graba el image_uri construido como commit status
+  # en el HEAD del PR. El CD lo lee por el numero de PR (del merge commit) y deploya
+  # esa imagen EXACTA (sin "latest" en ECR, que es fragil con commits de mismo digest).
+  record-image:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Grabar image_uri en commit status del PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMG: ${{ needs.build.outputs.image_uri }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+            -f state=success -f context=deploy/image -f description="$IMG" >/dev/null
+          echo "status deploy/image=$IMG en $SHA"
