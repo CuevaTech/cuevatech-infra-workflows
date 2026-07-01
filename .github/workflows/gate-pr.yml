@@ -42,8 +42,8 @@ jobs:
     uses: ./.github/workflows/ci-node.yml
     with:
       node_version: ${{ inputs.node_version }}
-      tests_required: false
-      checks_required: false
+      tests_required: true       # BLOQUEANTE desde 2026-07-01: test rojo corta el PR
+      checks_required: true      # BLOQUEANTE: typecheck/lint rojo corta el PR
       product: ${{ inputs.product }}
       microservice: ${{ inputs.microservice }}
       env: ${{ inputs.env }}
@@ -53,8 +53,8 @@ jobs:
     if: ${{ inputs.lang == 'php' }}
     uses: ./.github/workflows/ci-php.yml
     with:
-      tests_required: false
-      checks_required: false
+      tests_required: true       # BLOQUEANTE desde 2026-07-01
+      checks_required: true      # BLOQUEANTE (php -l / Pint)
       product: ${{ inputs.product }}
       microservice: ${{ inputs.microservice }}
       env: ${{ inputs.env }}

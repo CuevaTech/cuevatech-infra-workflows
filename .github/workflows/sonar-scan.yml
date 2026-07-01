@@ -63,11 +63,10 @@ jobs:
       # sonar.sources/exclusions vienen del sonar-project.properties del repo.
       - name: SonarQube Scan
         id: sonar
-        # TEMPORAL — Sonar INFORMATIVO durante la migracion/pruebas: el scan corre y
-        # espera el Quality Gate, pero si queda ROJO el job NO bloquea el merge.
-        # REACTIVAR BLOQUEANTE: borrar esta linea `continue-on-error` cuando el equipo
-        # tenga coverage/tests y el Quality Gate pase (volvera a cortar el PR).
-        continue-on-error: true
+        # BLOQUEANTE (desde 2026-07-01): qualitygate.wait=true + SIN continue-on-error.
+        # Si el Quality Gate queda ROJO, el scanner sale != 0 y este job FALLA -> bloquea
+        # el merge del PR. El corte "minimo D" (E no pasa) lo define el Quality Gate en
+        # SonarQube (condicion de rating peor-que-D). Ver nota al pie.
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
