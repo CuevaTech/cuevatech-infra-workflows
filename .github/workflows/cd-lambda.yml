@@ -32,7 +32,7 @@ jobs:
       contents: read
     steps:
       - id: resolve
-        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main
+        uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main2
         with:
           product: ${{ inputs.product }}
           env: ${{ inputs.env }}
