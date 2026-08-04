@@ -17,9 +17,9 @@
     "prod":    { "account": "539749168220", "region": "us-east-2" }
   },
   "pulse-to-trader": {
-    "dev":     { "account": "279251427349", "region": "us-east-1" },
-    "qa":      { "account": "279251427349", "region": "us-east-1" },
-    "prod":    { "account": "341777289386", "region": "us-east-1" }
+    "dev":     { "account": "279251427349", "region": "us-east-1", "role": "PulseToTraderGitHubActionsRole" },
+    "qa":      { "account": "279251427349", "region": "us-east-1", "role": "PulseToTraderGitHubActionsRole" },
+    "prod":    { "account": "341777289386", "region": "us-east-1", "role": "PulseToTradeECRProductionPromotionRole" }
   },
   "worldcenter": {
     "dev":     { "account": "486397018579", "region": "us-east-1" },

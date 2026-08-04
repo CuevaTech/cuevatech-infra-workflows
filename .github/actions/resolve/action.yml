@@ -49,11 +49,12 @@ runs:
 
         account=$(echo "$entry" | jq -r '.account')
         region=$(echo "$entry" | jq -r '.region')
+        role_name=$(echo "$entry" | jq -r '.role // "github-actions-deployer"')
 
         {
           echo "account=$account"
           echo "region=$region"
-          echo "role_arn=arn:aws:iam::${account}:role/github-actions-deployer"
+          echo "role_arn=arn:aws:iam::${account}:role/${role_name}"
           echo "registry=${account}.dkr.ecr.${region}.amazonaws.com"
         } >> "$GITHUB_OUTPUT"
 
