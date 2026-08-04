@@ -35,7 +35,7 @@ on:
         description: Repo de manifests que ArgoCD reconcilia.
         required: false
         type: string
-        default: CuevaTech/cuevatech-infra-kubernetes-manifests
+        default: CuevaTech/cuevatech-infra-argocd
     secrets:
       MANIFESTS_APP_ID:
         description: App ID de la GitHub App con contents:write sobre el repo de manifests.
@@ -58,7 +58,7 @@ jobs:
           # repositories = nombre del repo de manifests (sin owner); la App esta
           # instalada solo ahi, asi el token queda scoped a ese unico repo.
           owner: ${{ github.repository_owner }}
-          repositories: cuevatech-infra-kubernetes-manifests
+          repositories: cuevatech-infra-argocd
 
       - name: Checkout manifests repo
         uses: actions/checkout@v4
