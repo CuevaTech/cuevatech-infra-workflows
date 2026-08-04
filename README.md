@@ -1,7 +1,7 @@
-# WorldBinary CI/CD — Reusable Workflows
+# CI/CD — Reusable Workflows
 
 Repositorio único de **workflows reutilizables** de GitHub Actions para todos los
-productos de WorldBinary (worldbinary, impulse, cuevatech). Centraliza la lógica
+productos de Cuevatech (worldbinary, impulse, pulse-to-trader, cuevatech). Centraliza la lógica
 de CI, build y deploy: cada microservicio solo declara un caller delgado.
 
 ---
@@ -63,6 +63,30 @@ push → CI (tsc/lint/test) → build (imagen→ECR + scan) → CD (segun type) 
     "qa":      { "account": "294337989757", "region": "us-west-2" },
     "staging": { "account": "683707058612", "region": "us-west-2" },
     "prod":    { "account": "788655294923", "region": "us-west-2" }
+  },
+  "impulse": {
+    "dev":     { "account": "272751719858", "region": "us-east-2" },
+    "qa":      { "account": "272751719858", "region": "us-east-2" },
+    "staging": { "account": "478067374942", "region": "us-east-2" },
+    "prod":    { "account": "539749168220", "region": "us-east-2" }
+  },
+  "impulse-apptrader": {
+    "dev":     { "account": "272751719858", "region": "us-east-2" },
+    "qa":      { "account": "272751719858", "region": "us-east-2" },
+    "prod":    { "account": "539749168220", "region": "us-east-2" }
+  },
+  "pulse-to-trader": {
+    "dev":     { "account": "279251427349", "region": "us-east-1" },
+    "qa":      { "account": "279251427349", "region": "us-east-1" },
+    "prod":    { "account": "341777289386", "region": "us-east-1" }
+  },
+  "worldcenter": {
+    "dev":     { "account": "486397018579", "region": "us-east-1" },
+    "qa":      { "account": "486397018579", "region": "us-east-1" },
+    "prod":    { "account": "486397018579", "region": "us-east-1" }
+  },
+  "cuevatech": {
+    "dev":     { "account": "852009799966", "region": "us-east-1" }
   }
 }
 ```
@@ -71,7 +95,11 @@ push → CI (tsc/lint/test) → build (imagen→ECR + scan) → CD (segun type) 
 - `role_arn` = `arn:aws:iam::<account>:role/github-actions-deployer`
 - `registry` = `<account>.dkr.ecr.<region>.amazonaws.com`
 
-> `dev` y `qa` comparten cuenta/cluster. `staging` = cuentas `*_Staging`.
+Marcas configuradas: `worldbinary`, `impulse`, `impulse-apptrader`,
+`impulse-pulse-to-trader`, `worldcenter` y `cuevatech`.
+
+`dev` y `qa` comparten cuenta cuando la marca tiene una cuenta no productiva
+única. `staging` solo está habilitado para WorldBinary e Impulse.
 
 ---
 

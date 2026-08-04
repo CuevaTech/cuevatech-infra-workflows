@@ -11,6 +11,21 @@
     "staging": { "account": "478067374942", "region": "us-east-2" },
     "prod":    { "account": "539749168220", "region": "us-east-2" }
   },
+  "impulse-apptrader": {
+    "dev":     { "account": "272751719858", "region": "us-east-2" },
+    "qa":      { "account": "272751719858", "region": "us-east-2" },
+    "prod":    { "account": "539749168220", "region": "us-east-2" }
+  },
+  "pulse-to-trader": {
+    "dev":     { "account": "279251427349", "region": "us-east-1" },
+    "qa":      { "account": "279251427349", "region": "us-east-1" },
+    "prod":    { "account": "341777289386", "region": "us-east-1" }
+  },
+  "worldcenter": {
+    "dev":     { "account": "486397018579", "region": "us-east-1" },
+    "qa":      { "account": "486397018579", "region": "us-east-1" },
+    "prod":    { "account": "486397018579", "region": "us-east-1" }
+  },
   "cuevatech": {
     "dev":     { "account": "852009799966", "region": "us-east-1" }
   }
