@@ -110,7 +110,7 @@ jobs:
           PRODUCT: ${{ inputs.product }}
           MS: ${{ inputs.microservice }}
         run: |
-          default="${IMAGE_NAME:-${PRODUCT}-${MS}}"
+          default="${IMAGE_NAME:-${PRODUCT}/${MS}}"
           echo "src_name=${SRC_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
           echo "dst_name=${DST_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
 

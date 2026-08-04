@@ -84,7 +84,7 @@ jobs:
           IMAGE_NAME: ${{ inputs.image_name }}
           PRODUCT: ${{ inputs.product }}
           MS: ${{ inputs.microservice }}
-        run: echo "name=${IMAGE_NAME:-${PRODUCT}-${MS}}" >> "$GITHUB_OUTPUT"
+        run: echo "name=${IMAGE_NAME:-${PRODUCT}/${MS}}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure ECR repo
         if: ${{ inputs.push }}
@@ -104,10 +104,6 @@ jobs:
           REPO: ${{ steps.repo.outputs.name }}
           ENVIRON: ${{ inputs.env }}
         run: |
-          # Prefijo de tag por entorno. prod queda sin prefijo porque su repo
-          # vive en cuenta hermetica separada (788), el nombre del repo no
-          # mezcla envs y el prefijo seria redundante. Cuenta dev/qa (294)
-          # comparte repo, asi que el prefijo distingue grupos para lifecycle.
           case "$ENVIRON" in
             dev)     prefix="develop-" ;;
             qa)      prefix="qa-" ;;
