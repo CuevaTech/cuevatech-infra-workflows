@@ -142,6 +142,10 @@ jobs:
           load: true
           push: false
           tags: ${{ steps.meta.outputs.image_uri }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
