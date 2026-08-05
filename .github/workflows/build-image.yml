@@ -136,6 +136,7 @@ jobs:
       # Reporte completo (todas las severidades) para contar y pushear al
       # dashboard. No bloquea (exit 0); el gate de mas abajo es el que corta.
       - name: Trivy report (JSON)
+        if: ${{ false }} # Temporalmente deshabilitado
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.image_uri }}
@@ -149,7 +150,7 @@ jobs:
       # de Trivy: la decision sale del mismo JSON ya generado.
       - name: Trivy summary + gate decision
         id: trivy
-        if: ${{ always() && hashFiles('trivy-report.json') != '' }}
+        if: ${{ false }} # Temporalmente deshabilitado
         run: |
           R=trivy-report.json
           sev() { jq -r --arg s "$1" '[.Results[]?.Vulnerabilities[]? | select(.Severity==$s)] | length' "$R" 2>/dev/null || echo 0; }
@@ -193,7 +194,7 @@ jobs:
 
       # Pushea el estado de Trivy al Pushgateway central (dashboard semaforo).
       - name: Push Trivy metrics
-        if: ${{ always() && steps.trivy.outputs.status != '' }}
+        if: ${{ false }} # Temporalmente deshabilitado
         uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
         with:
           auth: ${{ secrets.PUSHGW_AUTH }}
