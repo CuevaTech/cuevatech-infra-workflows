@@ -140,20 +140,7 @@ jobs:
           DST_ENV: ${{ inputs.dst_env }}
         run: |
           set -euo pipefail
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          prefix_for() {
-            case "$1" in
-              dev)     echo "develop-" ;;
-              qa)      echo "qa-" ;;
-              staging) echo "staging-" ;;
-              prod)    echo "" ;;
-              *)       echo "${1}-" ;;
-            esac
-          }
-          src_prefix=$(prefix_for "$SRC_ENV")
-          dst_prefix=$(prefix_for "$DST_ENV")
-
-          pattern="^${src_prefix}${SHORT_SHA}-[0-9]+$"
+          pattern="^.+-${SRC_ENV}$"
           src_tag=$(aws ecr describe-images \
             --repository-name "$SRC_REPO" --region "$REGION" \
             --query "reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]" \
@@ -166,8 +153,7 @@ jobs:
           aws ecr describe-repositories --repository-names "$DST_REPO" --region "$REGION" >/dev/null 2>&1 \
             || aws ecr create-repository --repository-name "$DST_REPO" --region "$REGION" \
                  --image-scanning-configuration scanOnPush=true
-          core="${src_tag#${src_prefix}}"
-          dst_tag="${dst_prefix}${core}"
+          if [ "$DST_ENV" = "prod" ]; then dst_tag="${src_tag%-${SRC_ENV}}"; else dst_tag="${src_tag%-${SRC_ENV}}-${DST_ENV}"; fi
           src_uri="${REGISTRY}/${SRC_REPO}:${src_tag}"
           dst_uri="${REGISTRY}/${DST_REPO}:${dst_tag}"
           echo "Pulling  $src_uri"
@@ -201,18 +187,7 @@ jobs:
           SRC_ENV: ${{ inputs.src_env }}
         run: |
           set -euo pipefail
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          prefix_for() {
-            case "$1" in
-              dev)     echo "develop-" ;;
-              qa)      echo "qa-" ;;
-              staging) echo "staging-" ;;
-              prod)    echo "" ;;
-              *)       echo "${1}-" ;;
-            esac
-          }
-          src_prefix=$(prefix_for "$SRC_ENV")
-          pattern="^${src_prefix}${SHORT_SHA}-[0-9]+$"
+          pattern="^.+-${SRC_ENV}$"
           src_tag=$(aws ecr describe-images \
             --repository-name "$REPO" --region "$REGION" \
             --query "reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]" \
@@ -282,19 +257,7 @@ jobs:
           SRC_ENV: ${{ inputs.src_env }}
         run: |
           set -euo pipefail
-          prefix_for() {
-            case "$1" in
-              dev)     echo "develop-" ;;
-              qa)      echo "qa-" ;;
-              staging) echo "staging-" ;;
-              prod)    echo "" ;;
-              *)       echo "${1}-" ;;
-            esac
-          }
-          src_prefix=$(prefix_for "$SRC_ENV")
-          dst_prefix=$(prefix_for "$DST_ENV")
-          core="${SRC_TAG#${src_prefix}}"
-          dst_tag="${dst_prefix}${core}"
+          if [ "$DST_ENV" = "prod" ]; then dst_tag="${SRC_TAG%-${SRC_ENV}}"; else dst_tag="${SRC_TAG%-${SRC_ENV}}-${DST_ENV}"; fi
           src_uri="${SRC_REGISTRY}/${SRC_REPO}:${SRC_TAG}"
           dst_uri="${DST_REGISTRY}/${DST_REPO}:${dst_tag}"
           echo "Copying $src_uri -> $dst_uri"

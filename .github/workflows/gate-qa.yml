@@ -76,3 +76,14 @@ jobs:
           echo "type=${{ needs.detect.outputs.type }} has_tests=${{ needs.detect.outputs.has_tests }}"
           echo "playwright=${{ needs.playwright.result }} newman=${{ needs.newman.result }}"
           echo "Sin pruebas configuradas -> jobs skipped, gate pasa (informativo por ahora)."
+
+  promote:
+    needs: [detect, playwright, newman]
+    if: ${{ always() && needs.detect.result == 'success' && (needs.playwright.result == 'success' || needs.playwright.result == 'skipped') && (needs.newman.result == 'success' || needs.newman.result == 'skipped') }}
+    uses: ./.github/workflows/promote-image.yml
+    with:
+      product: ${{ inputs.product }}
+      src_env: dev
+      dst_env: qa
+      microservice: ${{ inputs.microservice }}
+    secrets: inherit
