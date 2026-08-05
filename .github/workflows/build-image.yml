@@ -1,7 +1,7 @@
 name: Build Image
 
 # Construye y publica una imagen Docker a ECR de la cuenta resuelta por product+env.
-# Auth via OIDC (sin access keys). Tag inmutable SHORT_SHA-TIMESTAMP, nunca :latest.
+# Auth via OIDC (sin access keys). Tags semver por entorno, nunca :latest.
 on:
   workflow_call:
     inputs:
@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: Dockerfile
+      version:
+        description: Versión base semántica. Si se omite, se obtiene de package.json.
+        required: false
+        type: string
+        default: ""
       push:
         description: >-
           Si true (default) construye, escanea con Trivy y PUSHEA la imagen a
@@ -104,14 +109,15 @@ jobs:
           REPO: ${{ steps.repo.outputs.name }}
           ENVIRON: ${{ inputs.env }}
         run: |
+          base="${{ inputs.version }}"
+          if [ -z "$base" ] && [ -f package.json ]; then
+            base=$(jq -r '.version // empty' package.json)
+          fi
+          base="${base:-1.0.0}"
           case "$ENVIRON" in
-            dev)     prefix="develop-" ;;
-            qa)      prefix="qa-" ;;
-            staging) prefix="staging-" ;;
-            prod)    prefix="" ;;
-            *)       prefix="${ENVIRON}-" ;;
+            prod) tag="$base" ;;
+            *)    tag="${base}-${ENVIRON}" ;;
           esac
-          tag="${prefix}$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)"
           {
             echo "tag=$tag"
             echo "image_uri=${REGISTRY}/${REPO}:${tag}"
