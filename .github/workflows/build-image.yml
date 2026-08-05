@@ -106,6 +106,7 @@ jobs:
         name: Compute tag and URI
         env:
           REGISTRY: ${{ steps.resolve.outputs.registry }}
+          REGISTRY_REGION: ${{ steps.resolve.outputs.region }}
           REPO: ${{ steps.repo.outputs.name }}
           ENVIRON: ${{ inputs.env }}
         run: |
@@ -114,10 +115,15 @@ jobs:
             base=$(jq -r '.version // empty' package.json)
           fi
           base="${base:-1.0.0}"
-          case "$ENVIRON" in
-            prod) tag="$base" ;;
-            *)    tag="${base}-${ENVIRON}" ;;
-          esac
+          IFS=. read -r major minor patch <<< "$base"
+          major="${major:-1}"; minor="${minor:-0}"; patch="${patch:-0}"
+          suffix=""; [ "$ENVIRON" != "prod" ] && suffix="-${ENVIRON}"
+          candidate="${major}.${minor}.${patch}${suffix}"
+          while aws ecr describe-images --repository-name "$REPO" --region "$REGISTRY_REGION" --image-ids imageTag="$candidate" >/dev/null 2>&1; do
+            patch=$((patch + 1))
+            candidate="${major}.${minor}.${patch}${suffix}"
+          done
+          tag="$candidate"
           {
             echo "tag=$tag"
             echo "image_uri=${REGISTRY}/${REPO}:${tag}"
