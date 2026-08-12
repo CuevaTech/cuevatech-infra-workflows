@@ -80,9 +80,9 @@ jobs:
       product: ${{ inputs.product }}
       env: ${{ inputs.env }}
       microservice: ${{ inputs.microservice }}
-      # The PR gate validates the candidate image only. The environment CD
-      # workflow builds and publishes exactly once after the merge.
-      push: false
+      # The PR gate is the single CI/CD entrypoint for the repository and
+      # publishes the candidate image exactly once.
+      push: true
     secrets: inherit
 
   # Handoff determinista PR -> CD: graba el image_uri construido como commit status
