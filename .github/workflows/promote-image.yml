@@ -1,7 +1,7 @@
 name: Promote Image
 
 # Promueve una imagen ECR ya construida de un entorno a otro:
-#   - Intra-account (misma cuenta+region): docker pull + tag + push.
+#   - Intra-account (misma cuenta+region): copia el manifiesto en ECR.
 #   - Cross-account: crane copy preservando digest bit-exacto.
 #
 # Los secrets son runtime, asi que la misma imagen sirve para dev/qa/prod.
@@ -115,7 +115,7 @@ jobs:
           echo "dst_name=${DST_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
 
       # ────────────────────────────────────────────────────────────────────
-      # INTRA-ACCOUNT path: docker pull + tag + push, mismo registry.
+      # INTRA-ACCOUNT path: copia el manifiesto en ECR, sin descargar ni subir capas.
       # ────────────────────────────────────────────────────────────────────
       - name: AWS credentials (intra)
         if: steps.mode.outputs.is_cross == 'false'
@@ -130,7 +130,7 @@ jobs:
 
       - id: intra
         if: steps.mode.outputs.is_cross == 'false'
-        name: Find + retag + push (intra)
+        name: Find + promote manifest (intra)
         env:
           SRC_REPO: ${{ steps.repo.outputs.src_name }}
           DST_REPO: ${{ steps.repo.outputs.dst_name }}
@@ -156,11 +156,39 @@ jobs:
           if [ "$DST_ENV" = "prod" ]; then dst_tag="${src_tag%-${SRC_ENV}}"; else dst_tag="${src_tag%-${SRC_ENV}}-${DST_ENV}"; fi
           src_uri="${REGISTRY}/${SRC_REPO}:${src_tag}"
           dst_uri="${REGISTRY}/${DST_REPO}:${dst_tag}"
-          echo "Pulling  $src_uri"
-          docker pull "$src_uri"
-          docker tag "$src_uri" "$dst_uri"
-          echo "Pushing  $dst_uri"
-          docker push "$dst_uri"
+          manifest=$(aws ecr batch-get-image \
+            --repository-name "$SRC_REPO" --region "$REGION" \
+            --image-ids imageTag="$src_tag" \
+            --query 'images[0].imageManifest' --output text)
+          if [ -z "$manifest" ] || [ "$manifest" = "None" ]; then
+            echo "::error::No se pudo leer el manifiesto de $src_uri"
+            exit 1
+          fi
+          src_digest=$(aws ecr describe-images \
+            --repository-name "$SRC_REPO" --region "$REGION" \
+            --image-ids imageTag="$src_tag" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          if aws ecr describe-images --repository-name "$DST_REPO" --region "$REGION" \
+            --image-ids imageTag="$dst_tag" >/dev/null 2>&1; then
+            dst_digest=$(aws ecr describe-images \
+              --repository-name "$DST_REPO" --region "$REGION" \
+              --image-ids imageTag="$dst_tag" \
+              --query 'imageDetails[0].imageDigest' --output text)
+            if [ "$src_digest" != "$dst_digest" ]; then
+              echo "::error::El tag inmutable destino ya existe con otro digest: $dst_uri ($dst_digest; esperado $src_digest)"
+              exit 1
+            fi
+            echo "Tag ya promovido: $src_uri -> $dst_uri ($src_digest)"
+          else
+            aws ecr put-image --repository-name "$DST_REPO" --region "$REGION" \
+              --image-tag "$dst_tag" --image-manifest "$manifest" >/dev/null
+            dst_digest=$(aws ecr describe-images \
+              --repository-name "$DST_REPO" --region "$REGION" \
+              --image-ids imageTag="$dst_tag" \
+              --query 'imageDetails[0].imageDigest' --output text)
+            test "$src_digest" = "$dst_digest"
+            echo "Promovido: $src_uri -> $dst_uri ($src_digest)"
+          fi
           {
             echo "src_tag=$src_tag"
             echo "dst_tag=$dst_tag"
