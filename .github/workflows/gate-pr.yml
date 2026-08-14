@@ -90,10 +90,11 @@ jobs:
   # esa imagen EXACTA (sin "latest" en ECR, que es fragil con commits de mismo digest).
   record-image:
     needs: build
-    # Corre SIEMPRE (no se salta cuando build falla) -> no deja nodo gris "fantasma"
-    # en el grafo del gate. Es tolerante: si no hay imagen (build fallo) solo avisa.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     steps:
       - name: Grabar image_uri en commit status del PR
         env:
@@ -102,12 +103,14 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
         run: |
-          if gh api -X POST "repos/${REPO}/statuses/${SHA}" \
-               -f state=success -f context=deploy/image -f description="$IMG" >/dev/null 2>&1; then
-            echo "status deploy/image=$IMG en $SHA"
-          else
-            echo "::warning::no se pudo grabar el commit status (el caller necesita permissions statuses: write)"
-          fi
+          set -euo pipefail
+          test -n "$IMG"
+          test -n "$SHA"
+          gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+            -f state=success \
+            -f context=deploy/image \
+            -f description="$IMG" >/dev/null
+          echo "status deploy/image=$IMG en $SHA"
 
   # Valida (INFORMATIVO) que el micro backend tenga un graceful-shutdown y que NO este
   # vacio. NO valida que el codigo funcione (eso es de los devs). Fronts: no aplica.
