@@ -37,6 +37,16 @@ on:
         required: false
         type: string
         default: ""
+      ref:
+        description: Commit o referencia que se debe construir. Por defecto usa el SHA del evento invocador.
+        required: false
+        type: string
+        default: ""
+      public_build_args_from_environment_secret:
+        description: Obtiene las claves NEXT_PUBLIC_* del Secret <product>/<env>/<microservice> para el build.
+        required: false
+        type: boolean
+        default: false
       push:
         description: >-
           Si true (default) construye, escanea con Trivy y PUSHEA la imagen a
@@ -65,6 +75,8 @@ jobs:
       image_uri: ${{ steps.meta.outputs.image_uri }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - id: resolve
         uses: CuevaTech/cuevatech-infra-workflows/.github/actions/resolve@main2
@@ -82,6 +94,33 @@ jobs:
       - name: Login to ECR
         if: ${{ inputs.push }}
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve public build arguments from the environment Secret
+        id: public-build-args
+        if: ${{ inputs.push && inputs.public_build_args_from_environment_secret }}
+        env:
+          PRODUCT: ${{ inputs.product }}
+          ENVIRONMENT: ${{ inputs.env }}
+          MICROSERVICE: ${{ inputs.microservice }}
+          AWS_REGION: ${{ steps.resolve.outputs.region }}
+        run: |
+          set -euo pipefail
+          secret_id="${PRODUCT}/${ENVIRONMENT}/${MICROSERVICE}"
+          secret_json="$(aws secretsmanager get-secret-value --secret-id "$secret_id" --region "$AWS_REGION" --query SecretString --output text)"
+          build_args="$(jq -r '
+            to_entries[]
+            | select(.key | startswith("NEXT_PUBLIC_"))
+            | "\(.key)=\(.value | tostring)"
+          ' <<<"$secret_json")"
+          [[ -n "$build_args" ]] || {
+            echo "::error::El Secret $secret_id no contiene claves NEXT_PUBLIC_* para el build."
+            exit 1
+          }
+          {
+            echo "args<<EOF"
+            echo "$build_args"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - id: repo
         name: Resolve ECR repo name
@@ -146,6 +185,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.run_id }}
+          build-args: ${{ steps.public-build-args.outputs.args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
