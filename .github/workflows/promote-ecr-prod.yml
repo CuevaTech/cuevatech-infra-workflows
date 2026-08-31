@@ -1,0 +1,143 @@
+name: Promote ECR image to PulseToTrade production
+
+on:
+  workflow_call:
+    inputs:
+      microservice:
+        required: true
+        type: string
+      app_name:
+        required: true
+        type: string
+      deployment:
+        required: true
+        type: string
+      qa_values_file:
+        required: true
+        type: string
+      prod_values_file:
+        required: true
+        type: string
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: us-east-1
+      DEV_ACCOUNT_ID: "279251427349"
+      PROD_ACCOUNT_ID: "341777289386"
+      ECR_REPOSITORY: pulse-to-trader/${{ inputs.microservice }}
+      PROD_IMAGE_REPOSITORY: 341777289386.dkr.ecr.us-east-1.amazonaws.com/pulse-to-trader/${{ inputs.microservice }}
+      GITOPS_BRANCH: main
+      APP_NAME: ${{ inputs.app_name }}
+      DEPLOYMENT: ${{ inputs.deployment }}
+      QA_VALUES_FILE: ${{ inputs.qa_values_file }}
+      PROD_VALUES_FILE: ${{ inputs.prod_values_file }}
+    steps:
+      - name: Configure GitOps repository access
+        env:
+          KEY: ${{ secrets.MANIFESTS_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Resolve the approved QA image
+        id: source
+        run: |
+          set -euo pipefail
+          git clone --branch "$GITOPS_BRANCH" --single-branch git@github.com:CuevaTech/cuevatech-infra-argocd.git manifests
+          qa_tag="$(git -C manifests show "HEAD:$QA_VALUES_FILE" | awk -F'"' '/^  tag: / { print $2; exit }')"
+          [[ "$qa_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-qa$ ]] || {
+            echo "::error::QA image tag is invalid: $qa_tag"
+            exit 1
+          }
+          echo "qa_tag=$qa_tag" >> "$GITHUB_OUTPUT"
+          echo "prod_tag=${qa_tag%-qa}-prod" >> "$GITHUB_OUTPUT"
+
+      - name: Configure development ECR read access
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::279251427349:role/PulseToTraderGitHubActionsRole
+          role-session-name: github-prod-source-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Authenticate to development ECR
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${DEV_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Configure production ECR write access
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::341777289386:role/PulseToTradeECRProductionPromotionRole
+          role-session-name: github-prod-target-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Authenticate to production ECR
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${PROD_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_x86_64.tar.gz | tar -xz crane
+          sudo install crane /usr/local/bin/crane
+
+      - name: Copy the approved QA image to production ECR
+        env:
+          QA_TAG: ${{ steps.source.outputs.qa_tag }}
+          PROD_TAG: ${{ steps.source.outputs.prod_tag }}
+        run: |
+          set -euo pipefail
+          source_uri="${DEV_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${QA_TAG}"
+          target_uri="${PROD_IMAGE_REPOSITORY}:${PROD_TAG}"
+          if ! aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" >/dev/null 2>&1; then
+            crane copy "$source_uri" "$target_uri"
+          fi
+          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "$digest" == sha256:* ]]
+
+      - name: Update production desired state
+        id: gitops
+        env:
+          PROD_TAG: ${{ steps.source.outputs.prod_tag }}
+        run: |
+          set -euo pipefail
+          if grep -q '^  repository:' "manifests/$PROD_VALUES_FILE"; then
+            sed -i -E "s|^  repository: .*|  repository: ${PROD_IMAGE_REPOSITORY}|" "manifests/$PROD_VALUES_FILE"
+          else
+            sed -i "/^image:/a\\  repository: ${PROD_IMAGE_REPOSITORY}" "manifests/$PROD_VALUES_FILE"
+          fi
+          sed -i -E "s|^  tag: .*|  tag: \"${PROD_TAG}\"|" "manifests/$PROD_VALUES_FILE"
+          grep -Fx "  repository: ${PROD_IMAGE_REPOSITORY}" "manifests/$PROD_VALUES_FILE"
+          grep -Fx "  tag: \"${PROD_TAG}\"" "manifests/$PROD_VALUES_FILE"
+          cd manifests
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$PROD_VALUES_FILE"
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "deploy(pulse-to-trader/prod/${{ inputs.microservice }}): ${PROD_TAG}"
+          git push origin "$GITOPS_BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Sync and wait for Argo CD
+        if: steps.gitops.outputs.changed == 'true'
+        env:
+          ARGOCD_SERVER: ${{ secrets.PULSE_TO_TRADER_ARGOCD_SERVER }}
+          ARGOCD_AUTH_TOKEN: ${{ secrets.PULSE_TO_TRADER_ARGOCD_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$ARGOCD_SERVER"
+          test -n "$ARGOCD_AUTH_TOKEN"
+          docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app sync "$APP_NAME" --resource "apps:Deployment:${DEPLOYMENT}" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web
+          docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app wait "$APP_NAME" --resource "apps:Deployment:${DEPLOYMENT}" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web --health --sync --timeout 300
