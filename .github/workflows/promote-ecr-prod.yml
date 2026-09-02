@@ -127,7 +127,12 @@ jobs:
             exit 0
           fi
           git commit -m "deploy(pulse-to-trader/prod/${{ inputs.microservice }}): ${PROD_TAG}"
-          git push origin "$GITOPS_BRANCH"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$GITOPS_BRANCH"; then break; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            git fetch origin "$GITOPS_BRANCH"
+            git rebase "origin/$GITOPS_BRANCH"
+          done
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Sync and wait for Argo CD
