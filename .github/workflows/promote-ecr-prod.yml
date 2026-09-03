@@ -26,11 +26,12 @@ jobs:
       id-token: write
       contents: read
     env:
-      AWS_REGION: us-east-1
+      DEV_AWS_REGION: us-east-1
+      PROD_AWS_REGION: us-east-2
       DEV_ACCOUNT_ID: "279251427349"
       PROD_ACCOUNT_ID: "341777289386"
       ECR_REPOSITORY: pulse-to-trader/${{ inputs.microservice }}
-      PROD_IMAGE_REPOSITORY: 341777289386.dkr.ecr.us-east-1.amazonaws.com/pulse-to-trader/${{ inputs.microservice }}
+      PROD_IMAGE_REPOSITORY: 341777289386.dkr.ecr.us-east-2.amazonaws.com/pulse-to-trader/${{ inputs.microservice }}
       GITOPS_BRANCH: main
       APP_NAME: ${{ inputs.app_name }}
       DEPLOYMENT: ${{ inputs.deployment }}
@@ -65,24 +66,24 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::279251427349:role/PulseToTraderGitHubActionsRole
           role-session-name: github-prod-source-${{ github.run_id }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ env.DEV_AWS_REGION }}
 
       - name: Authenticate to development ECR
         run: |
           set -euo pipefail
-          aws ecr get-login-password | docker login --username AWS --password-stdin "${DEV_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password --region "$DEV_AWS_REGION" | docker login --username AWS --password-stdin "${DEV_ACCOUNT_ID}.dkr.ecr.${DEV_AWS_REGION}.amazonaws.com"
 
       - name: Configure production ECR write access
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::341777289386:role/PulseToTradeECRProductionPromotionRole
           role-session-name: github-prod-target-${{ github.run_id }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ env.PROD_AWS_REGION }}
 
       - name: Authenticate to production ECR
         run: |
           set -euo pipefail
-          aws ecr get-login-password | docker login --username AWS --password-stdin "${PROD_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password --region "$PROD_AWS_REGION" | docker login --username AWS --password-stdin "${PROD_ACCOUNT_ID}.dkr.ecr.${PROD_AWS_REGION}.amazonaws.com"
 
       - name: Install crane
         run: |
@@ -96,12 +97,12 @@ jobs:
           PROD_TAG: ${{ steps.source.outputs.prod_tag }}
         run: |
           set -euo pipefail
-          source_uri="${DEV_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${QA_TAG}"
+          source_uri="${DEV_ACCOUNT_ID}.dkr.ecr.${DEV_AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${QA_TAG}"
           target_uri="${PROD_IMAGE_REPOSITORY}:${PROD_TAG}"
-          if ! aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" >/dev/null 2>&1; then
+          if ! aws ecr describe-images --region "$PROD_AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" >/dev/null 2>&1; then
             crane copy "$source_uri" "$target_uri"
           fi
-          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" --query 'imageDetails[0].imageDigest' --output text)"
+          digest="$(aws ecr describe-images --region "$PROD_AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" --query 'imageDetails[0].imageDigest' --output text)"
           [[ "$digest" == sha256:* ]]
 
       - name: Update production desired state
