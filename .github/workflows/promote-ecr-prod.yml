@@ -145,5 +145,16 @@ jobs:
           set -euo pipefail
           test -n "$ARGOCD_SERVER"
           test -n "$ARGOCD_AUTH_TOKEN"
-          docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app sync "$APP_NAME" --resource "apps:Deployment:${DEPLOYMENT}" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web
-          docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app wait "$APP_NAME" --resource "apps:Deployment:${DEPLOYMENT}" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web --health --sync --timeout 300
+          if sync_output="$(docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app sync "$APP_NAME" --resource "apps:Deployment:${DEPLOYMENT}" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web 2>&1)"; then
+            printf '%s\n' "$sync_output"
+            docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app wait "$APP_NAME" --resource "apps:Deployment:${DEPLOYMENT}" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web --health --sync --timeout 300
+          else
+            printf '%s\n' "$sync_output" >&2
+            if ! printf '%s\n' "$sync_output" | grep -q "No matching app resources found"; then
+              exit 1
+            fi
+            # Bootstrap only: el Deployment aún no existe, por lo que Argo
+            # debe crear el chart completo antes de aplicar el filtro habitual.
+            docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app sync "$APP_NAME" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web
+            docker run --rm --entrypoint argocd quay.io/argoproj/argocd:v2.14.11 app wait "$APP_NAME" --server "$ARGOCD_SERVER" --auth-token "$ARGOCD_AUTH_TOKEN" --grpc-web --health --sync --timeout 300
+          fi
