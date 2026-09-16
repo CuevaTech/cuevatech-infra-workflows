@@ -12,7 +12,7 @@ on:
       deployment:
         required: true
         type: string
-      dev_values_file:
+      dev_image_uri:
         required: true
         type: string
       prod_values_file:
@@ -35,7 +35,7 @@ jobs:
       GITOPS_BRANCH: main
       APP_NAME: ${{ inputs.app_name }}
       DEPLOYMENT: ${{ inputs.deployment }}
-      DEV_VALUES_FILE: ${{ inputs.dev_values_file }}
+      DEV_IMAGE_URI: ${{ inputs.dev_image_uri }}
       PROD_VALUES_FILE: ${{ inputs.prod_values_file }}
     steps:
       - name: Configure GitOps repository access
@@ -52,10 +52,14 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          git clone --branch "$GITOPS_BRANCH" --single-branch git@github.com:CuevaTech/cuevatech-infra-argocd.git manifests
-          dev_tag="$(git -C manifests show "HEAD:$DEV_VALUES_FILE" | awk -F'"' '/^  tag: / { print $2; exit }')"
+          expected_prefix="${DEV_ACCOUNT_ID}.dkr.ecr.${DEV_AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:"
+          [[ "$DEV_IMAGE_URI" == "$expected_prefix"* ]] || {
+            echo "::error::Development image must be in the expected ECR repository"
+            exit 1
+          }
+          dev_tag="${DEV_IMAGE_URI##*:}"
           [[ "$dev_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]] || {
-            echo "::error::Development image tag is invalid: $dev_tag"
+            echo "::error::Development image tag is invalid"
             exit 1
           }
           echo "dev_tag=$dev_tag" >> "$GITHUB_OUTPUT"
@@ -111,6 +115,7 @@ jobs:
           PROD_TAG: ${{ steps.source.outputs.prod_tag }}
         run: |
           set -euo pipefail
+          git clone --branch "$GITOPS_BRANCH" --single-branch git@github.com:CuevaTech/cuevatech-infra-argocd.git manifests
           if grep -q '^  repository:' "manifests/$PROD_VALUES_FILE"; then
             sed -i -E "s|^  repository: .*|  repository: ${PROD_IMAGE_REPOSITORY}|" "manifests/$PROD_VALUES_FILE"
           else
