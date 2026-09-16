@@ -1,4 +1,4 @@
-name: Promote ECR image to PulseToTrade production
+name: Promote development ECR image to PulseToTrade production
 
 on:
   workflow_call:
@@ -12,7 +12,7 @@ on:
       deployment:
         required: true
         type: string
-      qa_values_file:
+      dev_values_file:
         required: true
         type: string
       prod_values_file:
@@ -35,7 +35,7 @@ jobs:
       GITOPS_BRANCH: main
       APP_NAME: ${{ inputs.app_name }}
       DEPLOYMENT: ${{ inputs.deployment }}
-      QA_VALUES_FILE: ${{ inputs.qa_values_file }}
+      DEV_VALUES_FILE: ${{ inputs.dev_values_file }}
       PROD_VALUES_FILE: ${{ inputs.prod_values_file }}
     steps:
       - name: Configure GitOps repository access
@@ -48,18 +48,18 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Resolve the approved QA image
+      - name: Resolve the approved development image
         id: source
         run: |
           set -euo pipefail
           git clone --branch "$GITOPS_BRANCH" --single-branch git@github.com:CuevaTech/cuevatech-infra-argocd.git manifests
-          qa_tag="$(git -C manifests show "HEAD:$QA_VALUES_FILE" | awk -F'"' '/^  tag: / { print $2; exit }')"
-          [[ "$qa_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-qa$ ]] || {
-            echo "::error::QA image tag is invalid: $qa_tag"
+          dev_tag="$(git -C manifests show "HEAD:$DEV_VALUES_FILE" | awk -F'"' '/^  tag: / { print $2; exit }')"
+          [[ "$dev_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]] || {
+            echo "::error::Development image tag is invalid: $dev_tag"
             exit 1
           }
-          echo "qa_tag=$qa_tag" >> "$GITHUB_OUTPUT"
-          echo "prod_tag=${qa_tag%-qa}-prod" >> "$GITHUB_OUTPUT"
+          echo "dev_tag=$dev_tag" >> "$GITHUB_OUTPUT"
+          echo "prod_tag=${dev_tag%-dev}-prod" >> "$GITHUB_OUTPUT"
 
       - name: Configure development ECR read access
         uses: aws-actions/configure-aws-credentials@v6
@@ -91,13 +91,13 @@ jobs:
           curl -fsSL https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_x86_64.tar.gz | tar -xz crane
           sudo install crane /usr/local/bin/crane
 
-      - name: Copy the approved QA image to production ECR
+      - name: Copy the approved development image to production ECR
         env:
-          QA_TAG: ${{ steps.source.outputs.qa_tag }}
+          DEV_TAG: ${{ steps.source.outputs.dev_tag }}
           PROD_TAG: ${{ steps.source.outputs.prod_tag }}
         run: |
           set -euo pipefail
-          source_uri="${DEV_ACCOUNT_ID}.dkr.ecr.${DEV_AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${QA_TAG}"
+          source_uri="${DEV_ACCOUNT_ID}.dkr.ecr.${DEV_AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${DEV_TAG}"
           target_uri="${PROD_IMAGE_REPOSITORY}:${PROD_TAG}"
           if ! aws ecr describe-images --region "$PROD_AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$PROD_TAG" >/dev/null 2>&1; then
             crane copy "$source_uri" "$target_uri"
