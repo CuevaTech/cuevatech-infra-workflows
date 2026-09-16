@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: "24"
+      lint_required:
+        description: Si false, el lint Node es informativo para este consumidor.
+        required: false
+        type: boolean
+        default: true
     outputs:
       image_uri:
         description: URI de la imagen construida en el PR (para el CD).
@@ -44,6 +49,7 @@ jobs:
       node_version: ${{ inputs.node_version }}
       tests_required: true       # BLOQUEANTE desde 2026-07-01: test rojo corta el PR
       checks_required: true      # BLOQUEANTE: typecheck/lint rojo corta el PR
+      lint_required: ${{ inputs.lint_required }}
       product: ${{ inputs.product }}
       microservice: ${{ inputs.microservice }}
       env: ${{ inputs.env }}

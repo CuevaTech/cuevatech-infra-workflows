@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: true
+      lint_required:
+        description: Si false, el lint es informativo y el typecheck mantiene su gate.
+        required: false
+        type: boolean
+        default: true
       product:
         description: Producto (worldbinary...). Vacio = no se pushea métrica al dashboard.
         required: false
@@ -86,7 +91,7 @@ jobs:
           npx tsc --noEmit 2>&1 | tee /tmp/tsc.txt
       - name: Lint
         id: lint
-        continue-on-error: ${{ inputs.checks_required == false }}
+        continue-on-error: ${{ inputs.lint_required == false }}
         run: |
           set -o pipefail
           npm run lint --if-present 2>&1 | tee /tmp/lint.txt
