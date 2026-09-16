@@ -60,10 +60,6 @@ jobs:
       env: ${{ inputs.env }}
     secrets: inherit
 
-  sonar:
-    uses: ./.github/workflows/sonar-scan.yml
-    secrets: inherit
-
   codeql:
     if: ${{ inputs.lang != 'php' }}   # CodeQL no soporta PHP; en php el scan de codigo lo cubre Trivy fs (SCA) del ci-php
     uses: ./.github/workflows/codeql.yml

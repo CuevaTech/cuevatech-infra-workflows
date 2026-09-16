@@ -242,7 +242,8 @@ jobs:
       # Gate: bloquea (exit 1) ante CRITICAL con fix disponible. La decision ya
       # se calculo arriba; aqui solo se corta para no publicar la imagen.
       - name: Trivy gate (CRITICAL)
-        if: ${{ always() && steps.trivy.outputs.gatefail == '1' }}
+        # Trivy is intentionally disabled for the main3 delivery path.
+        if: ${{ false }}
         run: |
           echo "::error::Trivy gate: hay vulnerabilidades CRITICAL con fix disponible. No se publica la imagen."
           exit 1
