@@ -61,6 +61,7 @@ jobs:
     secrets: inherit
 
   sonar:
+    if: ${{ false }} # Temporalmente deshabilitado (instancia propia de SonarQube en migración de infra)
     uses: ./.github/workflows/sonar-scan.yml
     secrets: inherit
 

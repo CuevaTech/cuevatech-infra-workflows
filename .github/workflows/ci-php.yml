@@ -107,7 +107,7 @@ jobs:
       # Solo corre cuando hay contexto (gate dev), no en feature (feedback rapido).
       # No bloquea (exit 0): por ahora solo reporta al dashboard (check=sca).
       - name: SCA scan (Trivy fs)
-        if: ${{ always() && inputs.microservice != '' }}
+        if: ${{ false }} # Temporalmente deshabilitado (migración de infra)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
