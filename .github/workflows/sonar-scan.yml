@@ -1,7 +1,7 @@
 name: SonarQube
 
 # Analisis de calidad/seguridad con SonarQube Community (self-hosted en
-# worldcenter, eks-worldbinary-app-v1, https://sonarqube.worldbinary.pro).
+# cuevatech, cuevatech-ohio, https://sonarqube.cuevatech.com).
 #
 # Gate bloqueante: corre el scanner con `sonar.qualitygate.wait=true`. Si el
 # Quality Gate del proyecto queda ROJO, el scanner termina != 0 y este job
