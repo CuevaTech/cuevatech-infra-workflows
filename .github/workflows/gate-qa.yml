@@ -1,6 +1,6 @@
 name: QA Gate
 
-# Gate del PR develop -> qa. CENTRALIZADO en el padre; el hijo solo invoca.
+# Gate del PR develop2 -> qa2. CENTRALIZADO en el padre; el hijo solo invoca.
 # Detecta si el repo es FRONTEND o BACKEND y corre la prueba que corresponde:
 #   - frontend -> Playwright (e2e)
 #   - backend  -> Newman (API/Postman)
@@ -21,7 +21,29 @@ on:
         default: qa
 
 jobs:
+  # A qa2 solo se llega desde develop2: lo que se promueve a QA es lo que ya paso por
+  # dev (cd-qa copia la imagen de dev). Un PR a qa2 desde otra rama falla aqui y
+  # arrastra al resto del gate. Fuera de un PR (workflow_dispatch) no aplica.
+  origen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Solo develop2 entra a qa2
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD: ${{ github.head_ref }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "evento $EVENT: sin PR, no se valida el origen"; exit 0
+          fi
+          if [ "$BASE" = "qa2" ] && [ "$HEAD" != "develop2" ]; then
+            echo "::error::a qa2 solo se llega desde develop2 (PR desde '$HEAD')"; exit 1
+          fi
+          echo "origen OK: $HEAD -> $BASE"
+
   detect:
+    needs: origen
     runs-on: ubuntu-latest
     outputs:
       type: ${{ steps.d.outputs.type }}
