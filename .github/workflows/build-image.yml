@@ -1,7 +1,5 @@
 name: Build Image
 
-# Construye y publica una imagen Docker a ECR de la cuenta resuelta por product+env.
-# Auth via OIDC (sin access keys). Tag inmutable SHORT_SHA-TIMESTAMP, nunca :latest.
 on:
   workflow_call:
     inputs:
@@ -104,10 +102,6 @@ jobs:
           REPO: ${{ steps.repo.outputs.name }}
           ENVIRON: ${{ inputs.env }}
         run: |
-          # Prefijo de tag por entorno. prod queda sin prefijo porque su repo
-          # vive en cuenta hermetica separada (788), el nombre del repo no
-          # mezcla envs y el prefijo seria redundante. Cuenta dev/qa (294)
-          # comparte repo, asi que el prefijo distingue grupos para lifecycle.
           case "$ENVIRON" in
             dev)     prefix="develop-" ;;
             qa)      prefix="qa-" ;;
@@ -121,8 +115,6 @@ jobs:
             echo "image_uri=${REGISTRY}/${REPO}:${tag}"
           } >> "$GITHUB_OUTPUT"
 
-      # El cache gha requiere el driver docker-container (el driver docker
-      # default no soporta cache export). setup-buildx lo provee.
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -137,8 +129,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Reporte completo (todas las severidades) para contar y pushear al
-      # dashboard. No bloquea (exit 0); el gate de mas abajo es el que corta.
       - name: Trivy report (JSON)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -148,9 +138,6 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
 
-      # Resume el reporte: cuenta vulnerabilidades por severidad y decide el
-      # gate (falla si hay CRITICAL con fix disponible). Reemplaza el segundo run
-      # de Trivy: la decision sale del mismo JSON ya generado.
       - name: Trivy summary + gate decision
         id: trivy
         if: ${{ always() && hashFiles('trivy-report.json') != '' }}
@@ -161,9 +148,6 @@ jobs:
           critfix=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" and ((.FixedVersion // "") != ""))] | length' "$R" 2>/dev/null || echo 0)
           echo "Trivy: CRITICAL=$crit (fixable=$critfix) HIGH=$high MEDIUM=$med LOW=$low UNKNOWN=$unk"
 
-          # Detalle EN EL LOG del run: tabla de vulnerabilidades CRITICAL/HIGH con
-          # fix disponible (severidad, CVE, paquete, version instalada, fix). Asi el
-          # error se ve directo en el step, no solo el mensaje generico del gate.
           echo "::group::Trivy — CRITICAL/HIGH con fix disponible (lo que bloquea el gate)"
           {
             printf 'SEVERIDAD\tCVE\tPAQUETE\tINSTALADA\tFIX\n'
@@ -172,7 +156,6 @@ jobs:
               | [.Severity, .VulnerabilityID, .PkgName, .InstalledVersion, .FixedVersion] | @tsv' "$R" 2>/dev/null | sort -u
           } | column -t -s "$(printf '\t')"
           echo "::endgroup::"
-          # Tambien deja el reporte completo (todas las severidades) como artefacto-en-log.
           echo "::group::Trivy — reporte completo (todas las severidades con fix)"
           jq -r '.Results[]?.Vulnerabilities[]?
             | select((.FixedVersion // "") != "")
@@ -189,13 +172,11 @@ jobs:
             echo "cicd_vulnerabilities{severity=\"LOW\"} $low"
             echo "cicd_vulnerabilities{severity=\"UNKNOWN\"} $unk"
             echo "EOF"
-            # Reporte literal: top 20 CRITICAL/HIGH (CVE, paquete, fix) para Grafana.
             echo "report<<EOF"
             jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | .[:20][] | "\(.Severity) \(.VulnerabilityID) \(.PkgName)@\(.InstalledVersion) -> \(.FixedVersion // "sin-fix")"' "$R" 2>/dev/null | head -20
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # Pushea el estado de Trivy al Pushgateway central (dashboard semaforo).
       - name: Push Trivy metrics
         if: ${{ always() && steps.trivy.outputs.status != '' }}
         uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
@@ -213,8 +194,6 @@ jobs:
           extra: ${{ steps.trivy.outputs.extra }}
           report: ${{ steps.trivy.outputs.report }}
 
-      # Gate: bloquea (exit 1) ante CRITICAL con fix disponible. La decision ya
-      # se calculo arriba; aqui solo se corta para no publicar la imagen.
       - name: Trivy gate (CRITICAL)
         if: ${{ always() && steps.trivy.outputs.gatefail == '1' }}
         run: |

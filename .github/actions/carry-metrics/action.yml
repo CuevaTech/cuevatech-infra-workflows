@@ -55,7 +55,6 @@ runs:
         src, dst = os.environ['SRC_ENV'], os.environ['DST_ENV']
         hdr = {'Authorization': 'Basic ' + base64.b64encode(auth.encode()).decode()}
 
-        # Lee la exposición completa del Pushgateway.
         try:
             req = urllib.request.Request(url + '/metrics', headers=hdr)
             text = urllib.request.urlopen(req, timeout=20).read().decode()
@@ -63,7 +62,6 @@ runs:
             print(f"carry-metrics: no se pudo leer Pushgateway: {e}")
             sys.exit(0)
 
-        # Labels que pone el Pushgateway desde la URL (grouping): no van en el body.
         GROUPING = {'job', 'product', 'micro', 'env', 'check', 'instance'}
         line_re = re.compile(r'^(cicd_[a-z_]+)\{([^}]*)\}\s+(\S+)')
         label_re = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')

@@ -1,10 +1,5 @@
 name: CI Node
 
-# CI para proyectos Node. Dos jobs paralelos:
-#   - checks: typecheck + lint (analisis estatico)
-#   - test:   pruebas
-# Inputs tests_required / checks_required: si false, esa etapa NO bloquea
-# (informativa) y se expone su resultado + detalle para notificar.
 on:
   workflow_call:
     inputs:
@@ -70,8 +65,6 @@ jobs:
           node-version: ${{ inputs.node_version }}
       - name: Install
         run: |
-          # Tolerante: npm ci si hay lock; si no (repos aun no migrados, JS plano),
-          # npm install. Evita que setup-node/npm ci rompan por falta de package-lock.
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci
           else
@@ -99,10 +92,6 @@ jobs:
           { echo "tsc_error<<EOF"; echo "$tsc_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
           { echo "lint_error<<EOF"; echo "$lint_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
-      # SCA: scan de dependencias del codigo fuente (lockfile + node_modules ya
-      # instalados por npm ci). Distinto al scan de imagen de build-image.
-      # Solo corre cuando hay contexto (gate dev), no en feature (feedback rapido).
-      # No bloquea (exit 0): por ahora solo reporta al dashboard (check=sca).
       - name: SCA scan (Trivy fs)
         if: ${{ always() && inputs.microservice != '' }}
         uses: aquasecurity/trivy-action@v0.36.0
@@ -148,8 +137,6 @@ jobs:
           commit: ${{ github.sha }}
           extra: ${{ steps.sca.outputs.extra }}
 
-      # check=lint en el dashboard = typecheck + lint juntos. Pasa si ninguno falla
-      # (tsc "skipped" cuando no hay tsconfig cuenta como OK).
       - name: Push lint metrics
         if: ${{ always() && inputs.microservice != '' }}
         uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main
@@ -177,8 +164,6 @@ jobs:
           node-version: ${{ inputs.node_version }}
       - name: Install
         run: |
-          # Tolerante: npm ci si hay lock; si no (repos aun no migrados, JS plano),
-          # npm install. Evita que setup-node/npm ci rompan por falta de package-lock.
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci
           else
@@ -195,8 +180,6 @@ jobs:
         if: always()
         run: |
           echo "tests_outcome=${{ steps.run.outcome }}" >> "$GITHUB_OUTPUT"
-          # node:test (tsx --test) usa el reporter spec. Tomar solo la seccion
-          # final "✖ failing tests:" (ahi van los tests fallidos, no los suites).
           fails=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/test-out.txt 2>/dev/null \
             | awk '/^✖ failing tests:/{f=1;next} f && /^✖ /{print}' \
             | sed -E 's/^✖ +//; s/ \([0-9.]+m?s\)$//' \

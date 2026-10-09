@@ -88,26 +88,17 @@ runs:
           exit 0
         fi
 
-        # Cuerpo en formato exposición Prometheus. Los labels de grouping
-        # (product/micro/env/check) NO van aquí: los agrega el Pushgateway desde
-        # la URL. El push reemplaza solo ese grupo.
         body="cicd_check_status{branch=\"${BRANCH}\"} ${STATUS}
         cicd_check_info{build_id=\"${BUILD_ID}\",commit=\"${COMMIT}\",version=\"${VERSION}\",branch=\"${BRANCH}\"} 1"
         if [ -n "$EXTRA" ]; then
           body="${body}
         ${EXTRA}"
         fi
-        # Reporte/error literal del paso -> label de cicd_check_report. Se sanea
-        # (tabs/saltos a espacio, escape de \ y ", truncado a 800 chars) para que
-        # sea un label válido del formato de exposición Prometheus. El Pushgateway
-        # reemplaza el grupo, así que solo queda el último reporte por check (sin
-        # explosión de cardinalidad). Grafana lo muestra como tabla (panel: luego).
         if [ -n "$REPORT" ]; then
           rep="$(printf '%s' "$REPORT" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-800)"
           body="${body}
         cicd_check_report{report=\"${rep}\"} ${STATUS}"
         fi
-        # Normalizar indentación accidental del heredoc y garantizar newline final.
         body="$(printf '%s\n' "$body" | sed 's/^[[:space:]]*//')"
 
         target="${URL%/}/metrics/job/cicd/product/${PRODUCT}/micro/${MICRO}/env/${ENVIRON}/check/${CHECK}"

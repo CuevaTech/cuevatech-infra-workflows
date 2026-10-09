@@ -1,15 +1,5 @@
 name: Promote Image
 
-# Promueve una imagen ECR ya construida de un entorno a otro:
-#   - Intra-account (misma cuenta+region): docker pull + tag + push.
-#   - Cross-account: crane copy preservando digest bit-exacto.
-#
-# Los secrets son runtime, asi que la misma imagen sirve para dev/qa/prod.
-# Tag dst:
-#   dst=qa      -> qa-<sha>-<ts>
-#   dst=staging -> staging-<sha>-<ts>
-#   dst=prod    -> <sha>-<ts> (sin prefijo; el repo en 788 es hermetico)
-
 on:
   workflow_call:
     inputs:
@@ -114,9 +104,6 @@ jobs:
           echo "src_name=${SRC_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
           echo "dst_name=${DST_IMAGE_NAME:-$default}" >> "$GITHUB_OUTPUT"
 
-      # ────────────────────────────────────────────────────────────────────
-      # INTRA-ACCOUNT path: docker pull + tag + push, mismo registry.
-      # ────────────────────────────────────────────────────────────────────
       - name: AWS credentials (intra)
         if: steps.mode.outputs.is_cross == 'false'
         uses: aws-actions/configure-aws-credentials@v4
@@ -162,7 +149,6 @@ jobs:
             echo "::error::No se encontro imagen con patron '${pattern}' en repo ${SRC_REPO}. El build de ${SRC_ENV} debe correr antes."
             exit 1
           fi
-          # Asegura el repo destino (en layout de 2 ECRs puede ser distinto al origen).
           aws ecr describe-repositories --repository-names "$DST_REPO" --region "$REGION" >/dev/null 2>&1 \
             || aws ecr create-repository --repository-name "$DST_REPO" --region "$REGION" \
                  --image-scanning-configuration scanOnPush=true
@@ -181,10 +167,6 @@ jobs:
             echo "image_uri=$dst_uri"
           } >> "$GITHUB_OUTPUT"
 
-      # ────────────────────────────────────────────────────────────────────
-      # CROSS-ACCOUNT path: crane copy preserva digest bit-exacto.
-      # Dual login: primero SRC (para buscar y pull), despues DST (para push).
-      # ────────────────────────────────────────────────────────────────────
       - name: AWS credentials SRC (cross)
         if: steps.mode.outputs.is_cross == 'true'
         uses: aws-actions/configure-aws-credentials@v4
@@ -305,9 +287,6 @@ jobs:
             echo "image_uri=${dst_uri}"
           } >> "$GITHUB_OUTPUT"
 
-      # ────────────────────────────────────────────────────────────────────
-      # Output unificado (uno de los dos paths corrio).
-      # ────────────────────────────────────────────────────────────────────
       - id: out
         name: Unify outputs
         env:
@@ -327,10 +306,6 @@ jobs:
             echo "image_uri=$image_uri"
           } >> "$GITHUB_OUTPUT"
 
-      # Carry-forward: la imagen promovida es el MISMO artefacto, asi que las
-      # pruebas de codigo/imagen (Trivy/CodeQL/SCA/lint/unit) de src_env aplican
-      # igual a dst_env. Se copian al dashboard sin re-correr. Las pruebas
-      # propias del destino (E2E en qa, smoke en prod) las corre su pipeline.
       - name: Carry-forward métricas src_env -> dst_env
         uses: CuevaTech/cuevatech-infra-workflows/.github/actions/carry-metrics@main
         with:

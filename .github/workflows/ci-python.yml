@@ -1,10 +1,5 @@
 name: CI Python
 
-# CI para proyectos Python. Mismo patron que ci-node:
-#   - checks: typecheck (mypy si hay config) + lint (ruff si hay config)
-#   - test:   pytest si hay carpeta tests/ o archivos test_*.py / *_test.py
-# Sin asumir nada project-specific: cada step skip si el proyecto no trae la
-# config correspondiente. Scan de imagen lo hace build-image.
 on:
   workflow_call:
     inputs:
@@ -60,11 +55,7 @@ jobs:
         run: |
           pip install ruff
           ruff check .
-      # SAST CodeQL vive en codeql.yml (reusable aparte, lo llama el caller).
 
-      # SCA: scan de dependencias del codigo fuente (requirements ya instalados).
-      # Solo corre cuando hay contexto (gate dev), no en feature (feedback rapido).
-      # No bloquea (exit 0): por ahora solo reporta al dashboard (check=sca).
       - name: SCA scan (Trivy fs)
         if: ${{ always() && inputs.microservice != '' }}
         uses: aquasecurity/trivy-action@v0.36.0
@@ -140,10 +131,6 @@ jobs:
         id: run
         shell: bash
         run: |
-          # Corre pytest solo si existen archivos de test Python reales (no un
-          # simple dir 'tests' que puede tener otros artefactos, ej. colecciones
-          # Postman en tests/postman). Ademas tolera exit 5 de pytest
-          # ("no se colecto ningun test") como no-fallo.
           has_py=$(find . -name '.git' -prune -o \( -name 'test_*.py' -o -name '*_test.py' \) -print 2>/dev/null | head -1)
           if [ -n "$has_py" ]; then
             pip install pytest

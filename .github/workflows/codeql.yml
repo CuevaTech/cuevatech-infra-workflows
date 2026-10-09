@@ -1,11 +1,5 @@
 name: CodeQL
 
-# SAST con CodeQL. Genera el SARIF localmente (upload:false) y NO lo sube a
-# GitHub code scanning — eso requiere GitHub Advanced Security en repos
-# privados. En su lugar se cuenta por severidad y el estado va al Pushgateway
-# central (dashboard semaforo, mismo flujo que el reporte Trivy de build-image).
-# Gate: bloquea el run si hay findings de severidad CRITICAL
-# (security-severity >= 9.0 en el SARIF de CodeQL).
 on:
   workflow_call:
     inputs:
@@ -49,8 +43,6 @@ jobs:
             *) echo "::error::lang no soportado: ${{ inputs.lang }}"; exit 1 ;;
           esac
 
-      # build-mode none: lenguajes interpretados (python/js) no compilan, no
-      # hace falta autobuild.
       - name: CodeQL init
         uses: github/codeql-action/init@v3
         with:
@@ -71,8 +63,6 @@ jobs:
           if [ -z "$f" ]; then echo "::error::no se genero SARIF"; exit 1; fi
           echo "file=$f" >> "$GITHUB_OUTPUT"
 
-      # Cuenta findings por severidad (security-severity = escala CVSS) y decide
-      # el gate (CRITICAL >= 9.0). La decision sale del SARIF ya generado.
       - name: CodeQL summary + gate decision
         id: codeql
         shell: bash
@@ -80,7 +70,6 @@ jobs:
         env:
           SARIF: ${{ steps.sarif.outputs.file }}
         run: |
-          # Devuelve la lista de security-severity numericas de todos los findings.
           scores=$(jq -r '
             [ .runs[]
               | ( (.tool.driver.rules // []) + ([ .tool.extensions[]?.rules[]? ]) ) as $rules

@@ -1,12 +1,5 @@
 name: CD ArgoCD
 
-# Deploy GitOps a Kubernetes: parcha el tag de la imagen en el repo de manifests
-# y pushea. ArgoCD reconcilia (pull). No usa credenciales AWS — solo necesita
-# escribir en el repo de manifests. Autentica como GitHub App (token de
-# installation efimero, ~1h) en vez de un PAT personal: permiso minimo
-# (contents:write solo sobre el repo de manifests), identidad propia <app>[bot]
-# y sin depender de la cuenta de una persona. App ID y private key vienen de
-# org secrets (se pasan a los callers via `secrets: inherit`).
 on:
   workflow_call:
     inputs:
@@ -54,9 +47,6 @@ jobs:
         with:
           app-id: ${{ secrets.MANIFESTS_APP_ID }}
           private-key: ${{ secrets.MANIFESTS_APP_PRIVATE_KEY }}
-          # owner = la org del caller (misma org que el repo de manifests).
-          # repositories = nombre del repo de manifests (sin owner); la App esta
-          # instalada solo ahi, asi el token queda scoped a ese unico repo.
           owner: ${{ github.repository_owner }}
           repositories: cuevatech-infra-kubernetes-manifests
 
@@ -78,7 +68,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Server (carpeta de cluster): dev y qa comparten el cluster dev/qa.
           case "$ENVIRON" in
             dev|qa) server="${PRODUCT}-dev" ;;
             *)      server="${PRODUCT}-${ENVIRON}" ;;
@@ -93,18 +82,13 @@ jobs:
 
           export IMAGE_URI
 
-          # Selecciona el contenedor por nombre (= microservicio) y reemplaza la
-          # imagen COMPLETA, sin importar el placeholder previo.
           yq -i '(.spec.template.spec.containers[] | select(.name == strenv(MS)) | .image) = strenv(IMAGE_URI)' "$file"
 
-          # Confirma que la imagen quedo escrita; si no, no existe el contenedor.
           if ! grep -q "$IMAGE_URI" "$file"; then
             echo "::error::no se encontro contenedor name=$MS en $file"
             exit 1
           fi
 
-          # Identidad del commit = la GitHub App (la identidad real del push es
-          # el token de installation que generamos arriba).
           git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git add "$file"

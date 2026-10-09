@@ -1,12 +1,5 @@
 name: PR Gate
 
-# Gate de PR CENTRALIZADO en el padre. El repo hijo solo invoca este reusable;
-# no puede saltarse sonar/trivy borrando algo de su repo. Corre en cada pull_request:
-#   - ci      : typecheck + lint + test + Trivy fs (dependencias)   -> Grafana
-#   - sonar   : SonarQube quality gate
-#   - codeql  : analisis de seguridad del codigo
-#   - build   : build Docker + push ECR (genera la imagen) + Trivy de imagen -> Grafana
-# Toda la metrica va a Grafana (Pushgateway). El image_uri se expone para el CD.
 on:
   workflow_call:
     inputs:
@@ -42,8 +35,8 @@ jobs:
     uses: ./.github/workflows/ci-node.yml
     with:
       node_version: ${{ inputs.node_version }}
-      tests_required: true       # BLOQUEANTE desde 2026-07-01: test rojo corta el PR
-      checks_required: true      # BLOQUEANTE: typecheck/lint rojo corta el PR
+      tests_required: true
+      checks_required: true
       product: ${{ inputs.product }}
       microservice: ${{ inputs.microservice }}
       env: ${{ inputs.env }}
@@ -53,8 +46,8 @@ jobs:
     if: ${{ inputs.lang == 'php' }}
     uses: ./.github/workflows/ci-php.yml
     with:
-      tests_required: true       # BLOQUEANTE desde 2026-07-01
-      checks_required: true      # BLOQUEANTE (php -l / Pint)
+      tests_required: true
+      checks_required: true
       product: ${{ inputs.product }}
       microservice: ${{ inputs.microservice }}
       env: ${{ inputs.env }}
@@ -65,7 +58,7 @@ jobs:
     secrets: inherit
 
   codeql:
-    if: ${{ inputs.lang != 'php' }}   # CodeQL no soporta PHP; en php el scan de codigo lo cubre Trivy fs (SCA) del ci-php
+    if: ${{ inputs.lang != 'php' }}
     uses: ./.github/workflows/codeql.yml
     with:
       lang: ${{ inputs.lang }}
@@ -83,13 +76,8 @@ jobs:
       push: true
     secrets: inherit
 
-  # Handoff determinista PR -> CD: graba el image_uri construido como commit status
-  # en el HEAD del PR. El CD lo lee por el numero de PR (del merge commit) y deploya
-  # esa imagen EXACTA (sin "latest" en ECR, que es fragil con commits de mismo digest).
   record-image:
     needs: build
-    # Corre SIEMPRE (no se salta cuando build falla) -> no deja nodo gris "fantasma"
-    # en el grafo del gate. Es tolerante: si no hay imagen (build fallo) solo avisa.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -107,8 +95,6 @@ jobs:
             echo "::warning::no se pudo grabar el commit status (el caller necesita permissions statuses: write)"
           fi
 
-  # Valida (INFORMATIVO) que el micro backend tenga un graceful-shutdown y que NO este
-  # vacio. NO valida que el codigo funcione (eso es de los devs). Fronts: no aplica.
   graceful:
     runs-on: ubuntu-latest
     steps:

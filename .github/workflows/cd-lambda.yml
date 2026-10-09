@@ -1,9 +1,5 @@
 name: CD Lambda
 
-# Deploy a Lambda image-based: actualiza el codigo de la funcion apuntando a la
-# imagen ya construida y publicada en ECR. Push directo a AWS (no GitOps), auth
-# via OIDC. NO toca la configuracion (env vars) — update-function-configuration
-# reemplaza el set completo y borraria SECRET_NAME u otras vars del runtime.
 on:
   workflow_call:
     inputs:
@@ -56,8 +52,6 @@ jobs:
             exit 1
           fi
 
-          # Sufijo de entorno de la funcion: dev del pipeline = 'develop' en Lambda;
-          # qa/staging/prod quedan igual.
           case "$ENVIRON" in
             dev) seg=develop ;;
             *)   seg="$ENVIRON" ;;

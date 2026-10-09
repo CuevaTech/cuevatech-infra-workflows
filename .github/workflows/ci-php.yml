@@ -1,10 +1,5 @@
 name: CI PHP
 
-# CI para proyectos PHP / Laravel. Misma interfaz que ci-node (inputs+outputs)
-# para que el caller y notify-slack sean uniformes:
-#   - checks: syntax (php -l, mapeado a tsc_outcome) + lint (Pint, lint_outcome)
-#   - test:   phpunit / artisan test si hay phpunit.xml
-# Cada step skip si el proyecto no trae la herramienta. Scan de imagen = build-image.
 on:
   workflow_call:
     inputs:
@@ -102,10 +97,6 @@ jobs:
           { echo "tsc_error<<EOF"; echo "$tsc_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
           { echo "lint_error<<EOF"; echo "$lint_err"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
-      # SCA: scan de dependencias (composer.lock). CodeQL no soporta PHP, asi que
-      # este es el unico scan de seguridad de codigo en repos PHP.
-      # Solo corre cuando hay contexto (gate dev), no en feature (feedback rapido).
-      # No bloquea (exit 0): por ahora solo reporta al dashboard (check=sca).
       - name: SCA scan (Trivy fs)
         if: ${{ always() && inputs.microservice != '' }}
         uses: aquasecurity/trivy-action@v0.36.0
@@ -151,7 +142,6 @@ jobs:
           commit: ${{ github.sha }}
           extra: ${{ steps.sca.outputs.extra }}
 
-      # check=lint en el dashboard = syntax (php -l) + Pint juntos.
       - name: Push lint metrics
         if: ${{ always() && inputs.microservice != '' }}
         uses: CuevaTech/cuevatech-infra-workflows/.github/actions/push-metrics@main

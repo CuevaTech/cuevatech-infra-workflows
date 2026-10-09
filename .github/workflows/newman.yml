@@ -1,11 +1,5 @@
 name: E2E Newman
 
-# Pruebas de integracion/e2e de APIs con newman (Postman CLI) contra un entorno
-# YA desplegado. Nivel qa: el artefacto ya esta deployado, esto valida su
-# comportamiento HTTP real. Generico para cualquier microservicio backend.
-# Si el caller declara este job, la coleccion es OBLIGATORIA: el job FALLA si no
-# existe (no hay e2e silenciosamente saltado). El repo debe traer al menos un
-# smoke en la ruta indicada por `collection` (ver ejemplo tests/postman/).
 on:
   workflow_call:
     inputs:
@@ -86,7 +80,6 @@ jobs:
           if [ -n "$API_KEY" ]; then
             args+=(--env-var "api_key=$API_KEY")
           fi
-          # newman sale != 0 si falla una asercion => corta el pipeline qa.
           newman "${args[@]}"
       - name: Upload newman report
         if: ${{ always() && hashFiles('newman-report.json') != '' }}
@@ -96,7 +89,6 @@ jobs:
           path: newman-report.json
           if-no-files-found: ignore
 
-      # Resume aserciones del reporte para el dashboard.
       - name: Newman summary
         id: sum
         if: ${{ always() }}

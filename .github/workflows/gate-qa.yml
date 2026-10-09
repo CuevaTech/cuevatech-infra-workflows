@@ -1,11 +1,5 @@
 name: QA Gate
 
-# Gate del PR develop2 -> qa2. CENTRALIZADO en el padre; el hijo solo invoca.
-# Detecta si el repo es FRONTEND o BACKEND y corre la prueba que corresponde:
-#   - frontend -> Playwright (e2e)
-#   - backend  -> Newman (API/Postman)
-# Por ahora INFORMATIVO: si no hay pruebas configuradas (sin collection / sin specs)
-# el job se SKIPea -> el gate pasa normal. Cuando haya pruebas, se ejecutan.
 on:
   workflow_call:
     inputs:
@@ -21,9 +15,6 @@ on:
         default: qa
 
 jobs:
-  # A qa2 solo se llega desde develop2: lo que se promueve a QA es lo que ya paso por
-  # dev (cd-qa copia la imagen de dev). Un PR a qa2 desde otra rama falla aqui y
-  # arrastra al resto del gate. Fuera de un PR (workflow_dispatch) no aplica.
   origen:
     runs-on: ubuntu-latest
     steps:

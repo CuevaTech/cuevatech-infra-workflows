@@ -26,8 +26,6 @@ outputs:
 runs:
   using: composite
   steps:
-    # Un composite action clona su repo al runner, asi que accounts.json (en la
-    # raiz de infra-workflows) es legible sin token ni checkout extra del caller.
     - id: r
       shell: bash
       env:

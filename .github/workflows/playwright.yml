@@ -1,8 +1,5 @@
 name: E2E Playwright
 
-# Pruebas e2e de navegador con Playwright contra un frontend YA desplegado.
-# Nivel qa de los repos frontend (no aplica a backends). Si el repo no trae
-# playwright.config.*, el job se salta (onboarding gradual).
 on:
   workflow_call:
     inputs:
@@ -77,7 +74,6 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
           PLAYWRIGHT_JSON_OUTPUT_NAME: pw-results.json
-        # reporter json (ademas de line) para extraer conteos al dashboard.
         run: npx playwright test --reporter=line,json
       - name: Upload report
         if: ${{ always() && steps.detect.outputs.found == 'true' }}
