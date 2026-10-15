@@ -108,4 +108,7 @@ jobs:
             curl -sf -u "$TOKEN:" "$HOST/api/qualitygates/project_status?projectKey=$KEY" \
               | jq -r '.projectStatus.conditions[]? | select(.status=="ERROR") | "::error::Sonar \(.metricKey): \(.actualValue) (umbral \(.comparator) \(.errorThreshold))"' \
               || echo "::warning::No se pudieron leer las condiciones del Quality Gate"
+            curl -sf -u "$TOKEN:" "$HOST/api/issues/search?componentKeys=$KEY&types=VULNERABILITY&resolved=false&ps=50" \
+              | jq -r '.issues[]? | "::error file=\(.component | sub("^[^:]*:"; "")),line=\(.line // 1)::Sonar \(.severity) \(.rule): \(.message)"' \
+              || echo "::warning::No se pudieron leer las vulnerabilidades"
           fi
