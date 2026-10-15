@@ -96,9 +96,16 @@ jobs:
       - name: Reporte Quality Gate (informativo)
         if: always()
         shell: bash
+        env:
+          HOST: ${{ vars.SONAR_HOST_URL }}
+          TOKEN: ${{ secrets.SONAR_TOKEN }}
+          KEY: ${{ steps.pk.outputs.key }}
         run: |
           if [ "${{ steps.sonar.outcome }}" = "success" ]; then
             echo "Sonar Quality Gate: PASS (${{ steps.pk.outputs.key }})"
           else
             echo "::warning::Sonar Quality Gate: FAILED (INFORMATIVO, no bloquea el merge). Reactivar bloqueante tras las pruebas. Dashboard: ${{ vars.SONAR_HOST_URL }}/dashboard?id=${{ steps.pk.outputs.key }}"
+            curl -sf -u "$TOKEN:" "$HOST/api/qualitygates/project_status?projectKey=$KEY" \
+              | jq -r '.projectStatus.conditions[]? | select(.status=="ERROR") | "::error::Sonar \(.metricKey): \(.actualValue) (umbral \(.comparator) \(.errorThreshold))"' \
+              || echo "::warning::No se pudieron leer las condiciones del Quality Gate"
           fi
