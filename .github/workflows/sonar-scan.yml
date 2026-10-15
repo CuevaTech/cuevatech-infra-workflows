@@ -8,6 +8,14 @@ on:
         required: false
         type: string
         default: ""
+      lang:
+        required: false
+        type: string
+        default: ""
+      node_version:
+        required: false
+        type: string
+        default: "24"
 
 jobs:
   scan:
@@ -43,6 +51,34 @@ jobs:
             echo "::error::secrets.SONAR_TOKEN vacio"; exit 1
           fi
 
+      - uses: actions/setup-node@v4
+        if: ${{ inputs.lang == 'node' && hashFiles('package.json') != '' }}
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Cobertura (lcov)
+        id: cov
+        if: ${{ inputs.lang == 'node' && hashFiles('package.json') != '' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+          npx --yes c8@10 --reporter=lcov --reporter=text-summary npm test --if-present
+
+      - name: Args de cobertura
+        id: covargs
+        shell: bash
+        run: |
+          if [ -s coverage/lcov.info ]; then
+            echo "args=-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Sin coverage/lcov.info: Sonar vera 0% de cobertura"
+          fi
+
       - name: SonarQube Scan
         id: sonar
         uses: SonarSource/sonarqube-scan-action@v6
@@ -55,6 +91,7 @@ jobs:
             -Dsonar.projectName=${{ steps.pk.outputs.key }}
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
+            ${{ steps.covargs.outputs.args }}
 
       - name: Reporte Quality Gate (informativo)
         if: always()

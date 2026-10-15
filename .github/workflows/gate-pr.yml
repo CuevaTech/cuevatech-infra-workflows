@@ -55,6 +55,9 @@ jobs:
 
   sonar:
     uses: ./.github/workflows/sonar-scan.yml
+    with:
+      lang: ${{ inputs.lang }}
+      node_version: ${{ inputs.node_version }}
     secrets: inherit
 
   codeql:
