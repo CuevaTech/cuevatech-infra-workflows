@@ -129,9 +129,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: 0.70.0
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy"
+          curl -sSfL --retry 5 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C "$RUNNER_TEMP/trivy" trivy
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/trivy/trivy" --version
+
       - name: Trivy report (JSON)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          skip-setup-trivy: true
           image-ref: ${{ steps.meta.outputs.image_uri }}
           format: json
           output: trivy-report.json
